@@ -328,20 +328,37 @@ This creates all core tables (`regions`, `users`, `devices`, `results`, `result_
 
 ### 4. Run SQL — Step 2: Auth User Trigger
 
+> **Re-run this if you see "Database error saving new user"** — the DROP statements make it safe to run multiple times.
+
 Open a **new query** in the SQL Editor and run:
 
 ```sql
+-- Drop first so this is safe to re-run
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+DROP FUNCTION IF EXISTS handle_new_auth_user();
+
 CREATE OR REPLACE FUNCTION handle_new_auth_user()
 RETURNS TRIGGER AS $$
 BEGIN
-    INSERT INTO users (id, first_name, last_name, role)
+    INSERT INTO public.users (id, first_name, last_name, role)
     VALUES (
         NEW.id,
-        COALESCE(NEW.raw_user_meta_data->>'first_name', ''),
-        COALESCE(NEW.raw_user_meta_data->>'last_name', ''),
-        COALESCE(NEW.raw_user_meta_data->>'role', 'admin')
-    );
+        COALESCE(
+            NULLIF(NEW.raw_user_meta_data->>'first_name', ''),
+            NULLIF(split_part(COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.raw_user_meta_data->>'name', ''), ' ', 1), ''),
+            ''
+        ),
+        COALESCE(
+            NULLIF(NEW.raw_user_meta_data->>'last_name', ''),
+            ''
+        ),
+        COALESCE(NULLIF(NEW.raw_user_meta_data->>'role', ''), 'admin')
+    )
+    ON CONFLICT (id) DO NOTHING;
+
     RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+    RETURN NEW; -- Never block sign-up. CompleteProfilePage handles missing data.
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
@@ -387,7 +404,33 @@ Define per-table policies once your roles are finalized (superadmins see all reg
 
 ---
 
-### 6. Create a Storage bucket for images
+### 6. Run SQL — Step 4: RLS policy for profile completion
+
+Open a **new query** and run:
+
+```sql
+-- Allow authenticated users to read, insert, and update their own profile row.
+-- INSERT is needed because CompleteProfilePage uses upsert (handles trigger failures).
+CREATE POLICY "Users can read own profile"
+    ON public.users FOR SELECT
+    TO authenticated
+    USING (auth.uid() = id);
+
+CREATE POLICY "Users can insert own profile"
+    ON public.users FOR INSERT
+    TO authenticated
+    WITH CHECK (auth.uid() = id);
+
+CREATE POLICY "Users can update own profile"
+    ON public.users FOR UPDATE
+    TO authenticated
+    USING (auth.uid() = id)
+    WITH CHECK (auth.uid() = id);
+```
+
+---
+
+### 7. Create a Storage bucket for images
 
 1. Go to **Storage → New bucket**
 2. Name it `result-images`
