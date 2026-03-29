@@ -57,34 +57,17 @@ erDiagram
 
 ---
 
-## SQL vs Prisma — Which to Use
+## Approach: SQL via Supabase Dashboard
 
-**Use Supabase SQL migrations (recommended for this project).**
-
-| Factor | Supabase SQL Migrations | Prisma Migrations |
-|---|---|---|
-| Already using Supabase | Native fit | Requires separate connection setup |
-| RLS (Row Level Security) | Full support in `.sql` files | Must be done outside Prisma anyway |
-| Supabase Dashboard visibility | Schema shows up directly | Schema shows up directly |
-| Auth integration (`auth.users`) | Direct `REFERENCES auth.users` | Requires raw SQL workaround |
-| Complexity | Low — just SQL files | Higher — Prisma Client, schema.prisma, type generation |
-| API server not yet built | No ORM needed yet | ORM is only useful once queries are written |
-
-Prisma becomes worth it **if** you build a Node.js/Express or NestJS API server and want type-safe query builders. Even then, the database schema should be initialized through Supabase migrations first — you can layer Prisma on top later via `prisma db pull`.
+No CLI, no Docker, nothing installed locally. All schema setup is done through the **Supabase SQL Editor** online. The SQL files in this doc are the source of truth — copy-paste and run them in order.
 
 ---
 
-## Migration SQL
+## Schema SQL
 
-File: `supabase/migrations/001_initial_schema.sql`
+Run this in **Supabase Dashboard → SQL Editor → New query**. Execute in one shot.
 
 ```sql
--- ============================================================
--- EXTENSIONS
--- ============================================================
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
-
 -- ============================================================
 -- TRIGGER FUNCTION: auto-update updated_at
 -- ============================================================
@@ -191,108 +174,66 @@ CREATE INDEX idx_result_images_result_id ON result_images(result_id);
 
 ---
 
-## Supabase Setup Guide
+---
 
-### Prerequisites
-- Node.js 18+
-- Docker Desktop (running) — needed by Supabase CLI for local dev
+## Supabase Dashboard Setup Guide
+
+No CLI, no Docker. Everything runs in the browser.
 
 ---
 
-### 1. Install Supabase CLI
+### 1. Create a Supabase project
 
-```bash
-brew install supabase/tap/supabase
-```
-
-Verify:
-```bash
-supabase --version
-```
-
----
-
-### 2. Initialize Supabase in the project
-
-From the repo root (or `api-server/` if that's where your backend will live):
-
-```bash
-supabase init
-```
-
-This creates a `supabase/` folder with:
-```
-supabase/
-  config.toml       ← local dev settings
-  migrations/       ← SQL migration files go here
-  seed.sql          ← optional seed data
-```
+1. Go to [supabase.com](https://supabase.com) and sign in (or create a free account)
+2. Click **New project**
+3. Fill in:
+   - **Name** — e.g., `rice-thesis`
+   - **Database password** — save this somewhere safe
+   - **Region** — pick the closest to the Philippines (Singapore is the nearest)
+4. Wait ~1 minute for provisioning
 
 ---
 
-### 3. Create the migration file
+### 2. Get your credentials
 
-```bash
-supabase migration new initial_schema
+Go to **Project Settings → API** and copy:
+
+| Variable | Where to find it |
+|---|---|
+| `VITE_SUPABASE_URL` | Project URL (e.g., `https://xxxx.supabase.co`) |
+| `VITE_SUPABASE_ANON_KEY` | `anon` `public` key |
+| `SUPABASE_SERVICE_ROLE_KEY` | `service_role` key (for FastAPI backend only — keep secret) |
+
+Add to `web-dashboard/.env`:
+```env
+VITE_SUPABASE_URL=https://<project-ref>.supabase.co
+VITE_SUPABASE_ANON_KEY=<anon-key>
 ```
 
-This creates `supabase/migrations/<timestamp>_initial_schema.sql`.
+Add to `api-server/.env`:
+```env
+SUPABASE_URL=https://<project-ref>.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=<service-role-key>
+SUPABASE_JWT_SECRET=<jwt-secret>
+```
 
-Paste the SQL from the section above into that file.
+The JWT secret is under **Project Settings → API → JWT Settings**.
 
 ---
 
-### 4. Option A — Apply to local Supabase (for development)
+### 3. Run SQL — Step 1: Tables & Triggers
 
-Start local Supabase stack (requires Docker):
-```bash
-supabase start
-```
+Open **SQL Editor → New query**, paste the full Schema SQL from above, click **Run**.
 
-Apply migrations:
-```bash
-supabase db reset
-# or incrementally:
-supabase migration up
-```
-
-Local Studio dashboard opens at **http://localhost:54323** — you can inspect your schema there.
-
-Local DB connection string:
-```
-postgresql://postgres:postgres@localhost:54322/postgres
-```
+This creates all 5 tables (`regions`, `users`, `devices`, `results`, `result_images`), their indexes, and the `updated_at` auto-update triggers.
 
 ---
 
-### 5. Option B — Apply directly to your hosted Supabase project
+### 4. Run SQL — Step 2: Auth User Trigger
 
-#### Link your project first:
-```bash
-supabase login
-supabase link --project-ref <your-project-ref>
-```
-
-Your project ref is in the Supabase dashboard URL:
-`https://supabase.com/dashboard/project/<project-ref>`
-
-#### Push the migration:
-```bash
-supabase db push
-```
-
-This runs all pending migrations in `supabase/migrations/` against your hosted database.
-
-> Alternatively, you can open the **SQL Editor** in the Supabase dashboard and run the migration SQL directly — useful for a one-time setup on a thesis project.
-
----
-
-### 6. Auto-create user profile on signup (Edge Function trigger)
-
-Since `users.id` references `auth.users(id)`, you need to insert a row into `users` when someone signs up. Add this as a **Database Trigger** via SQL:
+Open a **new query** in the SQL Editor and run:
 
 ```sql
--- Run this in Supabase SQL Editor or add as a second migration file
 CREATE OR REPLACE FUNCTION handle_new_auth_user()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -312,7 +253,9 @@ CREATE TRIGGER on_auth_user_created
     FOR EACH ROW EXECUTE FUNCTION handle_new_auth_user();
 ```
 
-When using `supabase.auth.signUp()` in the frontend, pass metadata:
+This fires automatically whenever a new user signs up via Supabase Auth, inserting a matching row into `public.users`. `SECURITY DEFINER` is required so the function has permission to write to `public.users`.
+
+When calling `supabase.auth.signUp()` from the frontend, pass the metadata so the trigger can populate the profile:
 ```ts
 supabase.auth.signUp({
   email,
@@ -325,28 +268,28 @@ supabase.auth.signUp({
 
 ---
 
-### 7. Environment variables
+### 5. Run SQL — Step 3: Enable Row Level Security
 
-Your web dashboard already expects these in `.env`:
-```env
-VITE_SUPABASE_URL=https://<project-ref>.supabase.co
-VITE_SUPABASE_ANON_KEY=<anon-key>
-```
-
-Both are found under **Project Settings → API** in the Supabase dashboard.
-
----
-
-### 8. Row Level Security (RLS) — recommended next step
-
-Enable RLS on all tables to ensure users can only access data scoped to their region:
+Open a **new query** and run:
 
 ```sql
-ALTER TABLE regions      ENABLE ROW LEVEL SECURITY;
-ALTER TABLE users        ENABLE ROW LEVEL SECURITY;
-ALTER TABLE devices      ENABLE ROW LEVEL SECURITY;
-ALTER TABLE results      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE regions       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE users         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE devices       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE results       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE result_images ENABLE ROW LEVEL SECURITY;
 ```
 
-Define policies per table based on the `role` and `region_id` in `users`. This is the core security layer for a multi-tenant setup like this one.
+This locks down direct PostgREST access. Since FastAPI uses the `service_role` key, it bypasses RLS entirely — RLS is a second defensive layer for anything that uses the `anon` or `authenticated` keys directly.
+
+Define per-table policies once your roles are finalized (superadmins see all regions, admins see only their own region).
+
+---
+
+### 6. Create a Storage bucket for images
+
+1. Go to **Storage → New bucket**
+2. Name it `result-images`
+3. Set it to **Private** (FastAPI handles all uploads using the service role key — no public access needed)
+
+The `storage_url` column in `result_images` stores the path within this bucket (e.g., `results/<result_id>/noir.jpg`).
