@@ -170,6 +170,18 @@ CREATE TABLE result_images (
 );
 
 CREATE INDEX idx_result_images_result_id ON result_images(result_id);
+
+
+-- ============================================================
+-- TABLE: suggestions  (E2E connection test / feedback)
+-- ============================================================
+CREATE TABLE suggestions (
+    id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    title      TEXT        NOT NULL,
+    body       TEXT        NOT NULL,
+    user_id    UUID        REFERENCES auth.users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 ```
 
 ---
@@ -278,6 +290,7 @@ ALTER TABLE users         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE devices       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE results       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE result_images ENABLE ROW LEVEL SECURITY;
+ALTER TABLE suggestions   ENABLE ROW LEVEL SECURITY;
 ```
 
 This locks down direct PostgREST access. Since FastAPI uses the `service_role` key, it bypasses RLS entirely — RLS is a second defensive layer for anything that uses the `anon` or `authenticated` keys directly.
