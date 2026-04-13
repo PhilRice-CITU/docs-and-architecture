@@ -27,6 +27,11 @@ erDiagram
         text display_name "e.g., cebu-112"
         text status "ENUM: active, maintenance, offline"
         uuid region_id FK
+        float cpu_percent "Nullable edge telemetry"
+        float memory_percent "Nullable edge telemetry"
+        float storage_percent "Nullable edge telemetry"
+        float temperature_celsius "Nullable edge telemetry"
+        int queue_depth "Nullable edge telemetry"
         timestamp updated_at
         timestamp created_at
     }
@@ -49,10 +54,31 @@ erDiagram
         timestamp created_at
     }
 
+    DEVICE_COMMANDS {
+        uuid id PK
+        uuid device_id FK
+        text command "ENUM: capture, restart-app, restart-device, shutdown-device"
+        jsonb args
+        text status "ENUM: queued, processing, completed, failed, cancelled"
+        timestamp processed_at
+        timestamp created_at
+    }
+
+    DEVICE_EVENTS {
+        uuid id PK
+        uuid device_id FK "Nullable for system-wide events"
+        text level "ENUM: INFO, WARN, ERROR"
+        text message
+        jsonb meta
+        timestamp created_at
+    }
+
     REGIONS ||--o{ USERS : "assigned to"
     REGIONS ||--o{ DEVICES : "houses"
     DEVICES ||--o{ RESULTS : "processes"
     RESULTS ||--|{ RESULT_IMAGES : "contains up to 10"
+    DEVICES ||--o{ DEVICE_COMMANDS : "receives commands"
+    DEVICES ||--o{ DEVICE_EVENTS : "emits events"
 ```
 
 ---
@@ -127,6 +153,11 @@ CREATE TABLE devices (
     status       TEXT        NOT NULL DEFAULT 'active'
                              CHECK (status IN ('active', 'maintenance', 'offline')),
     region_id    UUID        NOT NULL REFERENCES regions(id) ON DELETE RESTRICT,
+    cpu_percent  DOUBLE PRECISION,
+    memory_percent DOUBLE PRECISION,
+    storage_percent DOUBLE PRECISION,
+    temperature_celsius DOUBLE PRECISION,
+    queue_depth  INTEGER,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -136,6 +167,16 @@ CREATE INDEX idx_devices_region_id ON devices(region_id);
 CREATE TRIGGER trg_devices_updated_at
     BEFORE UPDATE ON devices
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+
+-- ============================================================
+-- PATCH: telemetry columns for existing deployments
+-- ============================================================
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS cpu_percent DOUBLE PRECISION;
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS memory_percent DOUBLE PRECISION;
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS storage_percent DOUBLE PRECISION;
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS temperature_celsius DOUBLE PRECISION;
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS queue_depth INTEGER;
 
 
 -- ============================================================
@@ -170,6 +211,44 @@ CREATE TABLE result_images (
 );
 
 CREATE INDEX idx_result_images_result_id ON result_images(result_id);
+
+
+-- ============================================================
+-- TABLE: device_commands
+-- ============================================================
+CREATE TABLE device_commands (
+    id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    device_id    UUID        NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    command      TEXT        NOT NULL CHECK (
+                             command IN ('capture', 'restart-app', 'restart-device', 'shutdown-device')
+                 ),
+    args         JSONB       NOT NULL DEFAULT '{}',
+    status       TEXT        NOT NULL DEFAULT 'queued' CHECK (
+                             status IN ('queued', 'processing', 'completed', 'failed', 'cancelled')
+                 ),
+    processed_at TIMESTAMPTZ,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_device_commands_device_id_created_at
+    ON device_commands(device_id, created_at DESC);
+
+
+-- ============================================================
+-- TABLE: device_events
+-- ============================================================
+CREATE TABLE device_events (
+    id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    device_id  UUID        REFERENCES devices(id) ON DELETE SET NULL,
+    level      TEXT        NOT NULL CHECK (level IN ('INFO', 'WARN', 'ERROR')),
+    message    TEXT        NOT NULL,
+    meta       JSONB       NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_device_events_created_at ON device_events(created_at DESC);
+CREATE INDEX idx_device_events_device_id_created_at
+    ON device_events(device_id, created_at DESC);
 
 
 -- ============================================================
@@ -210,19 +289,21 @@ No CLI, no Docker. Everything runs in the browser.
 
 Go to **Project Settings → API** and copy:
 
-| Variable | Where to find it |
-|---|---|
-| `VITE_SUPABASE_URL` | Project URL (e.g., `https://xxxx.supabase.co`) |
-| `VITE_SUPABASE_ANON_KEY` | `anon` `public` key |
+| Variable                    | Where to find it                                            |
+| --------------------------- | ----------------------------------------------------------- |
+| `VITE_SUPABASE_URL`         | Project URL (e.g., `https://xxxx.supabase.co`)              |
+| `VITE_SUPABASE_ANON_KEY`    | `anon` `public` key                                         |
 | `SUPABASE_SERVICE_ROLE_KEY` | `service_role` key (for FastAPI backend only — keep secret) |
 
 Add to `web-dashboard/.env`:
+
 ```env
 VITE_SUPABASE_URL=https://<project-ref>.supabase.co
 VITE_SUPABASE_ANON_KEY=<anon-key>
 ```
 
 Add to `api-server/.env`:
+
 ```env
 SUPABASE_URL=https://<project-ref>.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=<service-role-key>
@@ -237,7 +318,7 @@ The JWT secret is under **Project Settings → API → JWT Settings**.
 
 Open **SQL Editor → New query**, paste the full Schema SQL from above, click **Run**.
 
-This creates all 5 tables (`regions`, `users`, `devices`, `results`, `result_images`), their indexes, and the `updated_at` auto-update triggers.
+This creates all core tables (`regions`, `users`, `devices`, `results`, `result_images`, `device_commands`, `device_events`, `suggestions`), their indexes, and the `updated_at` auto-update triggers.
 
 ---
 
@@ -268,14 +349,15 @@ CREATE TRIGGER on_auth_user_created
 This fires automatically whenever a new user signs up via Supabase Auth, inserting a matching row into `public.users`. `SECURITY DEFINER` is required so the function has permission to write to `public.users`.
 
 When calling `supabase.auth.signUp()` from the frontend, pass the metadata so the trigger can populate the profile:
+
 ```ts
 supabase.auth.signUp({
   email,
   password,
   options: {
-    data: { first_name, last_name, role: 'admin' }
-  }
-})
+    data: { first_name, last_name, role: "admin" },
+  },
+});
 ```
 
 ---
@@ -290,6 +372,8 @@ ALTER TABLE users         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE devices       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE results       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE result_images ENABLE ROW LEVEL SECURITY;
+ALTER TABLE device_commands ENABLE ROW LEVEL SECURITY;
+ALTER TABLE device_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE suggestions   ENABLE ROW LEVEL SECURITY;
 ```
 
