@@ -178,6 +178,10 @@ ALTER TABLE devices ADD COLUMN IF NOT EXISTS storage_percent DOUBLE PRECISION;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS temperature_celsius DOUBLE PRECISION;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS queue_depth INTEGER;
 
+-- Per-device authentication credentials (required for edge auth)
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS device_secret_hash TEXT;
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS device_secret_rotated_at TIMESTAMPTZ;
+
 
 -- ============================================================
 -- TABLE: results
