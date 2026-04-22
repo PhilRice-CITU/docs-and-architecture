@@ -14,7 +14,7 @@ The system has 4 active codebases and 1 documentation repo:
 |------|-------|------|--------|
 | `ai-vision-model` | Python, OpenCV, ONNX | — | ✅ Complete |
 | `api-server` | FastAPI, Supabase, Python 3.11+ | 3001 | ⚠️ Inference not wired |
-| `edge-client` | Flask, Electron, React 19 | Flask:5055 | ⚠️ heartbeat.py missing |
+| `edge-client` | Flask, Electron, React 19 | Flask:5055 | ⚠️ Partial mock data |
 | `web-dashboard` | React 19, Vite, TanStack | 3000 | ⚠️ Partial mock data |
 | `docs-and-architecture` | Markdown, SQL | — | Reference only |
 
@@ -27,8 +27,7 @@ Raspberry Pi (edge-client)
   ├── Electron kiosk UI (React 19 + TanStack Router)
   │     └── HTTP polls Flask on localhost:5055
   ├── Flask API (src/app.py) — session CRUD, capture trigger, webhook receiver
-  ├── uploader.py — polls upload_queue.json → POST /scans/batch to cloud API
-  └── heartbeat.py — MISSING (not implemented yet)
+  └── uploader.py — polls upload_queue.json → POST /scans/batch to cloud API
 
            │ POST /scans/batch (multipart: raw + ir images)
            ▼
@@ -183,27 +182,23 @@ Full spec and transformation code: `docs-and-architecture/api-server/metrics-con
 
 ### 🟡 Medium
 
-**BUG 5: `heartbeat.py` doesn't exist**
-- `edge-client/startup.sh` tries to start `src/heartbeat.py` — file never implemented
-- Fix: create `edge-client/src/heartbeat.py` (HTTP POST to API or MQTT publish every 60s)
-
-**BUG 6: `/scans/batch` silently drops all but the last image pair**
+**BUG 5: `/scans/batch` silently drops all but the last image pair**
 - Edge client sends all session batches; API only processes `pair_count - 1` (the last)
 - Fix: iterate all pairs in `api-server/app/routers/scans.py` lines 139–144
 
-**BUG 7: Double-submit possible on edge-client sessions**
+**BUG 6: Double-submit possible on edge-client sessions**
 - `POST /sessions/{id}/submit` has no guard against already-graded sessions
 - Fix: check `session.status != 'graded'` before submitting in `edge-client/src/app.py`
 
-**BUG 8: `results.status` always stuck at `'pending'`**
+**BUG 7: `results.status` always stuck at `'pending'`**
 - Migration 001 added the `status` column, but scans router never sets it to `'graded'`
 - Fix: update status in scans router after successful inference
 
 ### 🟢 Minor
 
-**BUG 9: `contrasting_types_pct` hardcoded to `0.0`** in `ai-vision-model/inference/grader.py`
+**BUG 8: `contrasting_types_pct` hardcoded to `0.0`** in `ai-vision-model/inference/grader.py`
 
-**BUG 10: `edge.client.md` spec is outdated** — references old file names (`electron/` not `electron-app/`, `queue_manager.py` not `session_manager.py`, port 5000 not 5055)
+**BUG 9: `edge.client.md` spec is outdated** — references old file names (`electron/` not `electron-app/`, `queue_manager.py` not `session_manager.py`, port 5000 not 5055)
 
 ---
 

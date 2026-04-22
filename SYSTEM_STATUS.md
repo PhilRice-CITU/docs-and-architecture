@@ -143,22 +143,17 @@ This document is the single source of truth for the current implementation state
 
 ### 🟡 Medium
 
-**BUG 5: `heartbeat.py` referenced but doesn't exist**
-- `startup.sh` starts `src/heartbeat.py` as a background service
-- File does not exist → Pi startup fails at that step
-- **File:** `edge-client/startup.sh`; missing file: `edge-client/src/heartbeat.py`
-
-**BUG 6: `/scans/batch` silently drops all but the last image pair**
+**BUG 5: `/scans/batch` silently drops all but the last image pair**
 - Edge client uploads all session batches at once (multiple raw+IR pairs per submit)
 - API takes only `pair_count - 1` (the last pair), silently discards earlier pairs
 - No error or warning returned to caller
 - **File:** `api-server/app/routers/scans.py` lines 139–144
 
-**BUG 7: `POST /sessions/{id}/submit` allows double-submit**
+**BUG 6: `POST /sessions/{id}/submit` allows double-submit**
 - No status check before submitting — can re-submit a session already in `graded` state
 - **File:** `edge-client/src/app.py`
 
-**BUG 8: `results.status` column is always stuck at `'pending'`**
+**BUG 7: `results.status` column is always stuck at `'pending'`**
 - Migration 001 added `status TEXT NOT NULL DEFAULT 'pending'` to results table
 - `scans.py` insert never sets `status`; nothing in the codebase ever updates it to `'processing'` or `'graded'`
 - **File:** `api-server/app/routers/scans.py` lines 58–65; `docs-and-architecture/migrations/001_kiosk_grading_flow.sql`
@@ -167,12 +162,12 @@ This document is the single source of truth for the current implementation state
 
 ### 🟢 Minor
 
-**BUG 9: `contrasting_types_pct` hardcoded to `0.0`**
+**BUG 8: `contrasting_types_pct` hardcoded to `0.0`**
 - Always passes this parameter — cannot fail a grade on contrasting variety types per PNS/BAFS 290:2025
 - Requires rice variety metadata to compute properly
 - **File:** `ai-vision-model/inference/grader.py`
 
-**BUG 10: `edge.client.md` spec is outdated**
+**BUG 9: `edge.client.md` spec is outdated**
 - Spec says `electron/` → actual code is in `electron-app/`
 - Spec says `queue_manager.py` → actual file is `session_manager.py`
 - Spec says `FLASK_PORT=5000` → `.env.example` uses `5055`
@@ -204,9 +199,8 @@ The root cause of Bugs 1–3 is the absence of a transformation layer between wh
 
 1. **BUG 4** — Install `paho-mqtt` (unblocks server startup)
 2. **BUG 1 + 2 + 3** — Wire inference into `POST /scans` + implement metrics contract (unblocks all analytics)
-3. **BUG 8** — Update `results.status` lifecycle in scans router
-4. **BUG 5** — Implement `heartbeat.py` (unblocks Pi deployment)
-5. **BUG 6** — Fix batch endpoint to process all pairs, not just the last
-6. **BUG 7** — Add double-submit guard in edge-client session submit
-7. **BUG 9** — Implement `contrasting_types_pct` (needs variety metadata)
-8. **BUG 10** — Update `edge.client.md` to match actual file structure
+3. **BUG 7** — Update `results.status` lifecycle in scans router
+4. **BUG 5** — Fix batch endpoint to process all pairs, not just the last
+5. **BUG 6** — Add double-submit guard in edge-client session submit
+6. **BUG 8** — Implement `contrasting_types_pct` (needs variety metadata)
+7. **BUG 9** — Update `edge.client.md` to match actual file structure
