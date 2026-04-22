@@ -44,7 +44,7 @@ Run `api-server/tools/mqtt_phase0_cleanup.sql` after backup.
 - API server now includes an MQTT bridge service (`app/services/mqtt_bridge.py`) started during app lifespan.
 - API command queue publishes new commands to MQTT topic: `ricevision/devices/{device_id}/commands/{command_id}`.
 - API bridge subscribes to MQTT topics for `presence`, `telemetry`, `logs`, and `acks`.
-- Edge client now starts `src/mqtt_agent.py` when `MQTT_ENABLED=true`.
+- Edge client now starts `src/mqtt_agent.py` as a required runtime service (MQTT-only path).
 - Edge MQTT agent publishes retained presence and periodic telemetry.
 - Edge MQTT agent subscribes to command topic and publishes command acknowledgements.
 - Edge `event_client` now writes a local event queue consumed by MQTT agent for log publication.

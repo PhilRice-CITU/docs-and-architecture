@@ -1,4 +1,5 @@
 # edge-client — Coding Specification
+
 **Status:** Ready to code  
 **Pi target:** Raspberry Pi 4/5, Raspberry Pi OS Lite 64-bit  
 **Camera:** Raspberry Pi Camera Module 3 NoIR (or HQ Camera NoIR)
@@ -54,6 +55,7 @@ edge-client/
 ```
 
 `.gitignore` must contain:
+
 ```
 .env
 data/
@@ -68,6 +70,7 @@ electron/dist/
 ## Environment Variables
 
 ### `.env.example` — commit this
+
 ```env
 # Device identity
 DEVICE_ID=pi-001
@@ -390,7 +393,7 @@ trap 'release_lock; shutdown_all' EXIT INT TERM
 
 log_section "Environment"
 load_env "$SCRIPT_DIR/.env"
-require_vars DEVICE_ID API_BASE_URL
+require_vars DEVICE_ID API_BASE_URL MQTT_HOST MQTT_PORT
 apply_defaults
 
 log_section "Flask"
@@ -400,8 +403,8 @@ wait_for_flask "$FLASK_PORT"
 log_section "Uploader"
 start_service "uploader" "$APP_DIR/uploader.py"
 
-log_section "Heartbeat"
-start_service "heartbeat" "$APP_DIR/heartbeat.py"
+log_section "MQTT Agent"
+start_service "mqtt-agent" "$APP_DIR/mqtt_agent.py"
 
 log_section "Kiosk"
 if ensure_display; then
@@ -420,11 +423,13 @@ supervise_flask
 
 **Purpose:** Dual camera capture. Two shots, JSON to stdout. Called by `app.py` via subprocess.  
 **Interface:**
+
 - Args: `<device_id> <session_id> <output_dir>`
 - Stdout: JSON `{"raw":"...", "ir":"...", "session_id":"...", "device_id":"...", "captured_at":"..."}`
 - Exit 0 = success, Exit 2 = camera error, Exit 3 = file not written
 
 **How to test standalone:**
+
 ```bash
 bash scripts/capture.sh pi-001 test-abc-123 /tmp/test-images
 ```
@@ -531,15 +536,15 @@ exit 0
 
 ### Routes
 
-| Method | Path | What it does |
-|--------|------|-------------|
-| GET | `/` | Serve kiosk HTML (mode select → WiFi → capture screens) |
-| GET | `/health` | `{"status":"ok"}` — polled by startup.sh |
-| GET | `/status` | `{"wifi_connected":bool, "ssid":"...", "queue_depth":N}` |
-| GET | `/wifi/scan` | Run `nmcli`, return list of SSIDs + signal + security |
-| POST | `/wifi/connect` | Run `nmcli dev wifi connect {ssid} password {pw}` |
-| POST | `/capture` | Call `capture.sh`, hand off to uploader, return immediately |
-| GET | `/thumbnail/<filename>` | Serve a downscaled JPEG thumbnail for UI preview |
+| Method | Path                    | What it does                                                |
+| ------ | ----------------------- | ----------------------------------------------------------- |
+| GET    | `/`                     | Serve kiosk HTML (mode select → WiFi → capture screens)     |
+| GET    | `/health`               | `{"status":"ok"}` — polled by startup.sh                    |
+| GET    | `/status`               | `{"wifi_connected":bool, "ssid":"...", "queue_depth":N}`    |
+| GET    | `/wifi/scan`            | Run `nmcli`, return list of SSIDs + signal + security       |
+| POST   | `/wifi/connect`         | Run `nmcli dev wifi connect {ssid} password {pw}`           |
+| POST   | `/capture`              | Call `capture.sh`, hand off to uploader, return immediately |
+| GET    | `/thumbnail/<filename>` | Serve a downscaled JPEG thumbnail for UI preview            |
 
 ### `/capture` route — exact behavior (non-blocking upload)
 
@@ -590,7 +595,7 @@ Add a persistent toggle to the capture screen header:
 
 ```html
 <label class="toggle">
-  <input type="checkbox" id="training-toggle">
+  <input type="checkbox" id="training-toggle" />
   <span>Training mode</span>
 </label>
 ```
@@ -619,11 +624,13 @@ Thumbnails go to `/tmp/thumbs/` — RAM, auto-cleaned on reboot.
 ### Python dependencies
 
 Install on Pi:
+
 ```bash
 pip3 install --break-system-packages flask requests python-jose loguru python-dotenv pillow
 ```
 
 `picamera2` is installed via apt:
+
 ```bash
 sudo apt install python3-picamera2
 ```
@@ -707,13 +714,13 @@ Electron replaces Chromium kiosk. The renderer is just HTML/CSS/JS making `fetch
 
 ### Why Electron over Chromium kiosk
 
-| | Chromium `--kiosk` | Electron |
-|---|---|---|
-| Dev experience | Edit HTML, refresh browser | Hot reload, DevTools, familiar workflow |
-| Native APIs | No | `ipcMain/ipcRenderer`, `shell`, `dialog` |
-| Dev vs Pi mode | Same flags everywhere | `ELECTRON_DEV=true` opens DevTools, disables kiosk |
-| Build once, run anywhere | Pi only | Develop on laptop, deploy to Pi |
-| Future GPIO | Needs Python subprocess | Can use `node-addon-api` if needed |
+|                          | Chromium `--kiosk`         | Electron                                           |
+| ------------------------ | -------------------------- | -------------------------------------------------- |
+| Dev experience           | Edit HTML, refresh browser | Hot reload, DevTools, familiar workflow            |
+| Native APIs              | No                         | `ipcMain/ipcRenderer`, `shell`, `dialog`           |
+| Dev vs Pi mode           | Same flags everywhere      | `ELECTRON_DEV=true` opens DevTools, disables kiosk |
+| Build once, run anywhere | Pi only                    | Develop on laptop, deploy to Pi                    |
+| Future GPIO              | Needs Python subprocess    | Can use `node-addon-api` if needed                 |
 
 ### `electron/package.json`
 
@@ -734,6 +741,7 @@ Electron replaces Chromium kiosk. The renderer is just HTML/CSS/JS making `fetch
 ```
 
 Install on Pi:
+
 ```bash
 cd electron
 npm install
@@ -748,87 +756,89 @@ npm install
 This is the Node.js process. It creates the window, sets kiosk mode, waits for Flask to be ready, then loads the UI.
 
 ```javascript
-const { app, BrowserWindow, ipcMain, shell } = require('electron')
-const path  = require('path')
-const http  = require('http')
+const { app, BrowserWindow, ipcMain, shell } = require("electron");
+const path = require("path");
+const http = require("http");
 
 // ── Config from env (set by lib/display.sh) ───────────────────────────────
-const FLASK_PORT  = process.env.GRAINSCAN_FLASK_PORT  || '5000'
-const DEV_MODE    = process.env.GRAINSCAN_DEV === 'true'
-const DISPLAY_MODE = process.env.GRAINSCAN_DISPLAY_MODE || 'auto'
-const FLASK_URL   = `http://localhost:${FLASK_PORT}`
+const FLASK_PORT = process.env.GRAINSCAN_FLASK_PORT || "5000";
+const DEV_MODE = process.env.GRAINSCAN_DEV === "true";
+const DISPLAY_MODE = process.env.GRAINSCAN_DISPLAY_MODE || "auto";
+const FLASK_URL = `http://localhost:${FLASK_PORT}`;
 
-let win
+let win;
 
 // ── Wait for Flask to be ready before loading UI ──────────────────────────
 function waitForFlask(retries = 30) {
   return new Promise((resolve, reject) => {
-    let attempts = 0
+    let attempts = 0;
 
     const check = () => {
-      http.get(`${FLASK_URL}/health`, (res) => {
-        if (res.statusCode === 200) return resolve()
-        retry()
-      }).on('error', retry)
-    }
+      http
+        .get(`${FLASK_URL}/health`, (res) => {
+          if (res.statusCode === 200) return resolve();
+          retry();
+        })
+        .on("error", retry);
+    };
 
     const retry = () => {
-      attempts++
-      if (attempts >= retries) return reject(new Error('Flask did not start'))
-      setTimeout(check, 1000)
-    }
+      attempts++;
+      if (attempts >= retries) return reject(new Error("Flask did not start"));
+      setTimeout(check, 1000);
+    };
 
-    check()
-  })
+    check();
+  });
 }
 
 // ── Create the BrowserWindow ──────────────────────────────────────────────
 function createWindow() {
   win = new BrowserWindow({
     // Kiosk on Pi, windowed on laptop for dev
-    kiosk:      !DEV_MODE,
+    kiosk: !DEV_MODE,
     fullscreen: !DEV_MODE,
-    frame:      DEV_MODE,        // title bar visible only in dev
-    resizable:  DEV_MODE,
+    frame: DEV_MODE, // title bar visible only in dev
+    resizable: DEV_MODE,
 
     // Touch-friendly defaults
-    width:  1280,
+    width: 1280,
     height: 800,
 
     webPreferences: {
-      preload:          path.join(__dirname, 'preload.js'),
-      contextIsolation: true,    // security: renderer can't access Node directly
-      nodeIntegration:  false,   // security: no require() in renderer
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true, // security: renderer can't access Node directly
+      nodeIntegration: false, // security: no require() in renderer
     },
-  })
+  });
 
   // Open DevTools in dev mode
-  if (DEV_MODE) win.webContents.openDevTools({ mode: 'detach' })
+  if (DEV_MODE) win.webContents.openDevTools({ mode: "detach" });
 
   // Load the UI — passes mode to renderer via URL query param
-  win.loadURL(`${FLASK_URL}/?mode=${DISPLAY_MODE}`)
+  win.loadURL(`${FLASK_URL}/?mode=${DISPLAY_MODE}`);
 
   // Prevent renderer from navigating away from localhost
-  win.webContents.on('will-navigate', (event, url) => {
+  win.webContents.on("will-navigate", (event, url) => {
     if (!url.startsWith(FLASK_URL)) {
-      event.preventDefault()
-      shell.openExternal(url)    // open external links in system browser
+      event.preventDefault();
+      shell.openExternal(url); // open external links in system browser
     }
-  })
+  });
 }
 
 // ── App lifecycle ─────────────────────────────────────────────────────────
 app.whenReady().then(async () => {
   try {
-    await waitForFlask()
-    createWindow()
+    await waitForFlask();
+    createWindow();
   } catch (err) {
-    console.error('Flask never became ready:', err.message)
-    app.quit()
+    console.error("Flask never became ready:", err.message);
+    app.quit();
   }
-})
+});
 
-app.on('window-all-closed', () => app.quit())
+app.on("window-all-closed", () => app.quit());
 
 // ── IPC handlers (main process side) ─────────────────────────────────────
 // These are optional — the renderer can call Flask directly via fetch().
@@ -836,9 +846,9 @@ app.on('window-all-closed', () => app.quit())
 // (file system, native dialogs, GPIO via child_process, etc.)
 
 // Example: renderer asks main to reveal a file in Finder/Files
-ipcMain.handle('show-item', (_, filePath) => {
-  shell.showItemInFolder(filePath)
-})
+ipcMain.handle("show-item", (_, filePath) => {
+  shell.showItemInFolder(filePath);
+});
 ```
 
 ---
@@ -848,19 +858,19 @@ ipcMain.handle('show-item', (_, filePath) => {
 The bridge between the sandboxed renderer and the main process. Expose only what the renderer needs.
 
 ```javascript
-const { contextBridge, ipcRenderer } = require('electron')
+const { contextBridge, ipcRenderer } = require("electron");
 
 // Everything exposed here is available in the renderer as window.electronAPI
-contextBridge.exposeInMainWorld('electronAPI', {
+contextBridge.exposeInMainWorld("electronAPI", {
   // Pass display mode so renderer can set CSS class immediately
-  displayMode: process.env.GRAINSCAN_DISPLAY_MODE || 'auto',
+  displayMode: process.env.GRAINSCAN_DISPLAY_MODE || "auto",
 
   // Is this a dev session?
-  isDev: process.env.GRAINSCAN_DEV === 'true',
+  isDev: process.env.GRAINSCAN_DEV === "true",
 
   // Future: expose any ipcMain handlers you add
   // showItem: (filePath) => ipcRenderer.invoke('show-item', filePath),
-})
+});
 ```
 
 ---
@@ -874,27 +884,29 @@ Minimal structure:
 ```html
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <!-- CSP: only allow requests to localhost -->
-  <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; connect-src http://localhost:*; script-src 'self'; style-src 'self' 'unsafe-inline'">
-  <title>GrainScan</title>
-  <link rel="stylesheet" href="styles.css">
-</head>
-<body>
-  <!-- Screen 1: mode select -->
-  <div id="screen-mode" class="screen active"> ... </div>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- CSP: only allow requests to localhost -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; connect-src http://localhost:*; script-src 'self'; style-src 'self' 'unsafe-inline'"
+    />
+    <title>GrainScan</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- Screen 1: mode select -->
+    <div id="screen-mode" class="screen active">...</div>
 
-  <!-- Screen 2: WiFi -->
-  <div id="screen-wifi" class="screen"> ... </div>
+    <!-- Screen 2: WiFi -->
+    <div id="screen-wifi" class="screen">...</div>
 
-  <!-- Screen 3: Capture (READY / CAPTURING / REVIEWING states) -->
-  <div id="screen-capture" class="screen"> ... </div>
+    <!-- Screen 3: Capture (READY / CAPTURING / REVIEWING states) -->
+    <div id="screen-capture" class="screen">...</div>
 
-  <script src="index.js"></script>
-</body>
+    <script src="index.js"></script>
+  </body>
 </html>
 ```
 
@@ -902,15 +914,15 @@ Minimal structure:
 
 ```javascript
 // index.js — always use the full URL, not relative paths
-const FLASK = 'http://localhost:5000'
+const FLASK = "http://localhost:5000";
 
 async function triggerCapture(label, isTraining) {
   const res = await fetch(`${FLASK}/capture`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ label, is_training: isTraining })
-  })
-  return res.json()
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ label, is_training: isTraining }),
+  });
+  return res.json();
 }
 ```
 
@@ -950,6 +962,7 @@ cd /home/grainbot/edge-client/electron && npm install
 The edge-client only knows about these three endpoints. All are on `API_BASE_URL`.
 
 ### `POST /api/v1/auth/device-token`
+
 ```
 Body (JSON):
   device_id: string
@@ -962,6 +975,7 @@ Response 200:
 ```
 
 ### `POST /api/v1/ingest`
+
 ```
 Content-Type: multipart/form-data
 Authorization: Bearer {jwt}
@@ -986,6 +1000,7 @@ Response 429: Rate limit hit
 ```
 
 ### `POST /api/v1/devices/{device_id}/heartbeat`
+
 ```
 Authorization: Bearer {jwt}
 Body (JSON):
@@ -1043,6 +1058,7 @@ WantedBy=graphical.target
 `capture.sh` has a placeholder between Take 1 and Take 2. What goes there depends entirely on your hardware. Pick one:
 
 ### Option A — Physical clip-on filter (researcher swaps manually)
+
 No GPIO needed. The researcher clips the IR-pass filter onto the lens before starting a scan, and leaves it there. Both shots use the filter. Take 1 has AWB on, Take 2 has AWB off. The difference between the two images comes from the camera settings, not the filter position.
 
 ```bash
@@ -1053,6 +1069,7 @@ sleep "$(echo "scale=3; $DELAY_MS / 1000" | bc)"
 Simplest. Requires researcher discipline. Works fine for a controlled lab environment.
 
 ### Option B — GPIO-controlled filter wheel or servo
+
 A motor physically moves the filter in front of the lens between shots. You need the `gpiod` tools.
 
 ```bash
@@ -1066,6 +1083,7 @@ gpioset gpiochip0 17=0        # retract filter after shot
 GPIO pin number (17 above) depends on your wiring. Add `GPIO_FILTER_PIN` to `.env`.
 
 ### Option C — LED switching (no physical filter)
+
 The "IR filter" is actually just two sets of LEDs — white LEDs for Take 1, IR LEDs for Take 2. No moving parts.
 
 ```bash
@@ -1095,6 +1113,7 @@ Add `GPIO_WHITE_LED_PIN` and `GPIO_IR_LED_PIN` to `.env`. Install: `sudo apt ins
 Work through this in order. Each item can be tested in isolation before the next.
 
 ### Shell layer (test on any Linux machine, not just Pi)
+
 - [ ] `source lib/log.sh && log_info "test"` — colors appear, file written to `/tmp/logs/startup.log`
 - [ ] `source lib/log.sh && source lib/env.sh && load_env .env` — vars exported to shell
 - [ ] `require_vars MISSING_VAR` — exits with error message
@@ -1102,17 +1121,20 @@ Work through this in order. Each item can be tested in isolation before the next
 - [ ] Reboot Pi — confirm `/tmp/logs/` is empty (RAM wipe confirmed)
 
 ### Camera (Pi only)
+
 - [ ] `bash scripts/capture.sh pi-dev test-001 /tmp/imgs` — two files appear in `/tmp/imgs`
 - [ ] Output is valid JSON: `bash scripts/capture.sh pi-dev test-002 /tmp/imgs | python3 -m json.tool`
 - [ ] Disconnect camera mid-capture — script exits non-zero, no orphan files
 
 ### Flask (Pi or laptop with mock camera)
+
 - [ ] `python3 src/app.py --port 5000 --image-dir /tmp/imgs`
 - [ ] `curl localhost:5000/health` → `{"status":"ok"}`
 - [ ] `curl localhost:5000/wifi/scan` → list of networks
 - [ ] Open `http://localhost:5000` in browser — three screens work
 
 ### Electron (laptop first, then Pi)
+
 - [ ] `cd electron && npm install` — no errors, `node_modules/electron` present
 - [ ] `ELECTRON_DEV=true GRAINSCAN_FLASK_PORT=5000 npm start` — window opens, DevTools visible
 - [ ] `fetch('http://localhost:5000/health')` in DevTools console → `{status:"ok"}`
@@ -1120,6 +1142,7 @@ Work through this in order. Each item can be tested in isolation before the next
 - [ ] On Pi: `npm start` from `electron/` (after Flask running) — fullscreen kiosk, no frame, no escape
 
 ### Full boot (Pi only)
+
 - [ ] `sudo systemctl start edge-client` — Electron window appears within 30s
 - [ ] Connect WiFi through kiosk UI
 - [ ] Tap capture — REVIEWING state shows two thumbnails
@@ -1134,21 +1157,21 @@ Work through this in order. Each item can be tested in isolation before the next
 
 ## Common Issues and Fixes
 
-| Issue | Likely cause | Fix |
-|-------|-------------|-----|
-| Flask doesn't start | Missing Python package | `pip3 install flask --break-system-packages` |
-| picamera2 import error | Not using Pi or wrong Python | `sudo apt install python3-picamera2` |
-| Electron window doesn't open | Node not in PATH in systemd | Add `Environment=PATH=...` to service file (see above) |
-| Electron opens then immediately closes | Flask not ready when Electron launched | `waitForFlask()` in `main.js` retries 30× — check Flask log first |
-| Black screen in kiosk | Display not ready before `startx` completes | Increase `sleep 3` in `ensure_display()` to `sleep 5` |
-| `--no-sandbox` error | Missing flag | Always pass `--no-sandbox` on Pi (non-root, no kernel namespaces) |
-| `npx electron` not found | Node not installed or wrong PATH | `curl -fsSL https://deb.nodesource.com/setup_20.x \| bash - && apt install nodejs` |
-| `fetch()` returns CORS error | Renderer loaded as `file://` with relative URL | Use absolute URLs: `http://localhost:5000/capture` not `/capture` |
-| `age` decrypt fails | Key not at `~/.keys/grainbot.key` | Check path in systemd `ExecStartPre` |
-| WiFi scan returns empty | `nmcli` not installed | `sudo apt install network-manager` |
-| Camera warmup too short | Auto-exposure not settling | Increase `CAMERA_WARMUP_MS` in `.env` |
-| IR shot overexposed | Exposure time too high | Lower `IR_EXPOSURE_US` in `.env` (default 30000 = 30ms) |
-| Thumbnail not showing | Pillow not installed | `pip3 install pillow --break-system-packages` |
-| GPIO filter not moving | Wrong pin or gpiod not installed | `sudo apt install gpiod`, check pin number in `.env` |
-| Training images going to wrong bucket | `is_training` flag not reaching api-server | Check toggle state in DevTools console, verify metadata JSON |
-| Logs missing after reboot | Expected — `/tmp` is RAM | SSH in during session, or temporarily set `LOG_DIR=./data/logs` |
+| Issue                                  | Likely cause                                   | Fix                                                                                |
+| -------------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------- |
+| Flask doesn't start                    | Missing Python package                         | `pip3 install flask --break-system-packages`                                       |
+| picamera2 import error                 | Not using Pi or wrong Python                   | `sudo apt install python3-picamera2`                                               |
+| Electron window doesn't open           | Node not in PATH in systemd                    | Add `Environment=PATH=...` to service file (see above)                             |
+| Electron opens then immediately closes | Flask not ready when Electron launched         | `waitForFlask()` in `main.js` retries 30× — check Flask log first                  |
+| Black screen in kiosk                  | Display not ready before `startx` completes    | Increase `sleep 3` in `ensure_display()` to `sleep 5`                              |
+| `--no-sandbox` error                   | Missing flag                                   | Always pass `--no-sandbox` on Pi (non-root, no kernel namespaces)                  |
+| `npx electron` not found               | Node not installed or wrong PATH               | `curl -fsSL https://deb.nodesource.com/setup_20.x \| bash - && apt install nodejs` |
+| `fetch()` returns CORS error           | Renderer loaded as `file://` with relative URL | Use absolute URLs: `http://localhost:5000/capture` not `/capture`                  |
+| `age` decrypt fails                    | Key not at `~/.keys/grainbot.key`              | Check path in systemd `ExecStartPre`                                               |
+| WiFi scan returns empty                | `nmcli` not installed                          | `sudo apt install network-manager`                                                 |
+| Camera warmup too short                | Auto-exposure not settling                     | Increase `CAMERA_WARMUP_MS` in `.env`                                              |
+| IR shot overexposed                    | Exposure time too high                         | Lower `IR_EXPOSURE_US` in `.env` (default 30000 = 30ms)                            |
+| Thumbnail not showing                  | Pillow not installed                           | `pip3 install pillow --break-system-packages`                                      |
+| GPIO filter not moving                 | Wrong pin or gpiod not installed               | `sudo apt install gpiod`, check pin number in `.env`                               |
+| Training images going to wrong bucket  | `is_training` flag not reaching api-server     | Check toggle state in DevTools console, verify metadata JSON                       |
+| Logs missing after reboot              | Expected — `/tmp` is RAM                       | SSH in during session, or temporarily set `LOG_DIR=./data/logs`                    |
