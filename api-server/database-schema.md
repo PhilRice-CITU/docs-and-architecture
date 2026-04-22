@@ -83,6 +83,32 @@ erDiagram
 
 ---
 
+## `results.metrics` JSONB Shape
+
+The `metrics` column stores the output of the AI inference pipeline after it has been transformed into the canonical analytics schema. Do **not** store the raw `ai-vision-model` report payload directly — use the transformation function in `app/utils/metrics.py`.
+
+See [metrics-contract.md](./metrics-contract.md) for the full field spec, grade mapping table, and transformation code.
+
+**Quick reference — expected keys:**
+
+| Key | Type | Example |
+|-----|------|---------|
+| `qualityGrade` | `"A"\|"B"\|"C"\|"D"` | `"B"` |
+| `rawGrade` | string | `"Grade No. 2"` |
+| `totalGrains` | int | `112` |
+| `grainSizeClass` | string | `"long"` |
+| `limitingFactor` | string | `"chalky_kernels_pct"` |
+| `brokenGrains` | float | `8.93` |
+| `chalkinessPercentage` | float | `6.25` |
+| `discolorationPercentage` | float | `0.71` |
+| `foreignMatter` | float | `0.0` |
+| `moistureContent` | float\|null | `null` (sensor not yet integrated) |
+| `grainLengthMm` | float\|null | `6.8` |
+| `qualityScore` | float\|null | `null` (not yet implemented) |
+| `parameters` | object | Full PNS/BAFS parameter set |
+
+---
+
 ## Approach: SQL via Supabase Dashboard
 
 No CLI, no Docker, nothing installed locally. All schema setup is done through the **Supabase SQL Editor** online. The SQL files in this doc are the source of truth — copy-paste and run them in order.
