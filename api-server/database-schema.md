@@ -39,9 +39,12 @@ erDiagram
     RESULTS {
         uuid id PK
         uuid device_id FK
-        text operator_name
-        text rice_variety "Nullable (updated by admin)"
+        text operator_name "Nullable"
+        text rice_variety "Nullable"
         jsonb metrics "AI computations (chalky, broken, etc.)"
+        text batch_name "Nullable"
+        text status "ENUM: pending, processing, graded, failed"
+        text callback_url "Nullable"
         timestamp updated_at
         timestamp created_at
     }
@@ -51,6 +54,20 @@ erDiagram
         uuid result_id FK
         text camera_type "ENUM: noir, led"
         text storage_url "Supabase Bucket path"
+        int batch_number "Default 1"
+        timestamp created_at
+    }
+
+    EDGE_SESSIONS {
+        uuid id PK
+        uuid device_id FK
+        text mode "ENUM: grade, train"
+        text operator_name
+        text session_name "Nullable"
+        text rice_variety "Nullable — varietyname_YYYYMMDD_HHmmss"
+        text status "ENUM: capturing, submitted, failed"
+        jsonb batches "Array of {batch_number, ir_path, white_path, captured_at}"
+        timestamp updated_at
         timestamp created_at
     }
 
@@ -79,6 +96,7 @@ erDiagram
     RESULTS ||--|{ RESULT_IMAGES : "contains up to 10"
     DEVICES ||--o{ DEVICE_COMMANDS : "receives commands"
     DEVICES ||--o{ DEVICE_EVENTS : "emits events"
+    DEVICES ||--o{ EDGE_SESSIONS : "owns"
 ```
 
 ---
@@ -111,13 +129,24 @@ See [metrics-contract.md](./metrics-contract.md) for the full field spec, grade 
 
 ## Approach: SQL via Supabase Dashboard
 
-No CLI, no Docker, nothing installed locally. All schema setup is done through the **Supabase SQL Editor** online. The SQL files in this doc are the source of truth — copy-paste and run them in order.
+No CLI, no Docker, nothing installed locally. All schema setup is done through the **Supabase SQL Editor** online.
+
+**Source of truth**: [`../schema.sql`](../schema.sql) — single consolidated file, current state.  
+**Reference data**: [`../seed.sql`](../seed.sql) — regions seed, safe to re-run.
+
+The `migrations/` folder contains the historical incremental files for reference only. Do not apply them to a fresh database — use `schema.sql` instead.
 
 ---
 
-## Schema SQL
+## Setup (fresh Supabase project)
 
-Run this in **Supabase Dashboard → SQL Editor → New query**. Execute in one shot.
+1. SQL Editor → paste `schema.sql` → Run
+2. SQL Editor → paste `seed.sql` → Run
+3. Storage → New bucket → name `result-images` → Private
+
+---
+
+## Schema SQL (embedded copy — canonical file is `../schema.sql`)
 
 ```sql
 -- ============================================================
