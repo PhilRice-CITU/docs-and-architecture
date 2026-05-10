@@ -43,7 +43,10 @@ erDiagram
         text rice_variety "Nullable"
         jsonb metrics "AI computations (chalky, broken, etc.)"
         text batch_name "Nullable"
-        text status "ENUM: pending, processing, graded, failed"
+        text status "ENUM: pending, processing, graded, failed, corrected"
+        text grading_error "Nullable"
+        timestamp graded_at "Nullable"
+        bool stub_mode "True if model file missing (synthetic data)"
         text callback_url "Nullable"
         timestamp updated_at
         timestamp created_at
@@ -52,7 +55,7 @@ erDiagram
     RESULT_IMAGES {
         uuid id PK
         uuid result_id FK
-        text camera_type "ENUM: noir, led"
+        text camera_type "ENUM: noir, led, annotated"
         text storage_url "Supabase Bucket path"
         int batch_number "Default 1"
         timestamp created_at
@@ -90,10 +93,22 @@ erDiagram
         timestamp created_at
     }
 
+    RESULT_CORRECTIONS {
+        uuid id PK
+        uuid result_id FK
+        uuid corrected_by FK "users.id"
+        text correction_type "ENUM: grain_class, grade_override"
+        jsonb payload
+        jsonb metrics_before
+        jsonb metrics_after
+        timestamp created_at
+    }
+
     REGIONS ||--o{ USERS : "assigned to"
     REGIONS ||--o{ DEVICES : "houses"
     DEVICES ||--o{ RESULTS : "processes"
     RESULTS ||--|{ RESULT_IMAGES : "contains up to 10"
+    RESULTS ||--o{ RESULT_CORRECTIONS : "audit trail"
     DEVICES ||--o{ DEVICE_COMMANDS : "receives commands"
     DEVICES ||--o{ DEVICE_EVENTS : "emits events"
     DEVICES ||--o{ EDGE_SESSIONS : "owns"

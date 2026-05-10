@@ -30,6 +30,19 @@ When `POST /scans` runs inference and stores a result, it must write this shape 
   "moistureContent": null,
   "grainLengthMm": 6.8,
   "rawGrade": "Grade No. 2",
+  "gradeOverridden": false,
+  "perGrain": [
+    {
+      "grain_id": 0,
+      "class_label": "whole_clear",
+      "bbox": [120, 80, 180, 110],
+      "confidence": 0.92,
+      "length_mm": 6.8,
+      "width_mm": 2.1,
+      "grain_size_class": "long",
+      "ir_mean_intensity": 130.2
+    }
+  ],
   "parameters": {
     "broken_kernels_pct": 8.93,
     "brewers_pct": 0.18,
@@ -60,6 +73,8 @@ When `POST /scans` runs inference and stores a result, it must write this shape 
 | `moistureContent` | `float\|null` | Hardware sensor (not yet integrated) | Store `null` until moisture sensor is added |
 | `grainLengthMm` | `float\|null` | Average `length_mm` across `whole_clear` grains in `per_grain` | Compute from per_grain list |
 | `rawGrade` | `string` | `grade` from report verbatim | Preserve for traceability; e.g., `"Grade No. 2"` |
+| `gradeOverridden` | `bool` | Set by `POST /results/{id}/grade-override` | `true` when an admin has manually set the final grade |
+| `perGrain` | `array` | `per_grain` from report | Required for dashboard annotation overlay + correction recompute |
 | `parameters` | `object` | `parameters` dict from report | Full parameter set for reference |
 
 ---
@@ -124,6 +139,8 @@ def build_metrics(report: dict) -> dict:
         "moistureContent":       None,  # hardware sensor not yet integrated
         "grainLengthMm":         avg_length,
         "rawGrade":              raw_grade,
+        "gradeOverridden":       False,
+        "perGrain":              per_grain,
         "parameters":            params,
     }
 ```

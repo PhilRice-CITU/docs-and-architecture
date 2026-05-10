@@ -6,6 +6,8 @@
 
 This document is the single source of truth for building the `edge-client` repo. Read this before writing any code.
 
+> **Note:** MQTT integration was removed in 2026-05-10. Any reference to `mqtt_agent.py`, MQTT topics, MQTT env vars, or `start_service "mqtt-agent"` in this spec is stale.
+
 ---
 
 ## Repository Structure

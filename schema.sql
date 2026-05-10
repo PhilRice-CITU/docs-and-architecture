@@ -94,7 +94,10 @@ CREATE TABLE IF NOT EXISTS results (
     metrics       JSONB       NOT NULL DEFAULT '{}',
     batch_name    TEXT,
     status        TEXT        NOT NULL DEFAULT 'pending'
-                              CHECK (status IN ('pending', 'processing', 'graded', 'failed')),
+                              CHECK (status IN ('pending', 'processing', 'graded', 'failed', 'corrected')),
+    grading_error TEXT,
+    graded_at     TIMESTAMPTZ,
+    stub_mode     BOOLEAN     NOT NULL DEFAULT FALSE,
     callback_url  TEXT,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -113,13 +116,30 @@ CREATE OR REPLACE TRIGGER trg_results_updated_at
 CREATE TABLE IF NOT EXISTS result_images (
     id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     result_id    UUID        NOT NULL REFERENCES results(id) ON DELETE CASCADE,
-    camera_type  TEXT        NOT NULL CHECK (camera_type IN ('noir', 'led')),
+    camera_type  TEXT        NOT NULL CHECK (camera_type IN ('noir', 'led', 'annotated')),
     storage_url  TEXT        NOT NULL,
     batch_number INTEGER     NOT NULL DEFAULT 1,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_result_images_result_id ON result_images(result_id);
+
+
+-- ============================================================
+-- TABLE: result_corrections (audit log for AI grading edits)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS result_corrections (
+    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    result_id       UUID        NOT NULL REFERENCES results(id) ON DELETE CASCADE,
+    corrected_by    UUID        NOT NULL REFERENCES users(id),
+    correction_type TEXT        NOT NULL CHECK (correction_type IN ('grain_class', 'grade_override')),
+    payload         JSONB       NOT NULL,
+    metrics_before  JSONB       NOT NULL,
+    metrics_after   JSONB       NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_result_corrections_result_id ON result_corrections(result_id);
 
 
 -- ============================================================
@@ -251,6 +271,7 @@ ALTER TABLE users           ENABLE ROW LEVEL SECURITY;
 ALTER TABLE devices         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE results         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE result_images   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE result_corrections ENABLE ROW LEVEL SECURITY;
 ALTER TABLE device_commands ENABLE ROW LEVEL SECURITY;
 ALTER TABLE device_events   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE suggestions     ENABLE ROW LEVEL SECURITY;

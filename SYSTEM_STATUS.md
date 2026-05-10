@@ -13,7 +13,7 @@ This document is the single source of truth for the current implementation state
 |------|--------|---------|
 | `ai-vision-model` | ✅ Functionally complete | Inference pipeline works end-to-end in stub mode; ONNX path ready |
 | `api-server` | ⚠️ Functional but broken integration | Endpoints work; inference never called; metrics schema mismatch |
-| `edge-client` | ⚠️ Works on laptop; Pi incomplete | Flask + Electron functional; heartbeat.py missing; no MQTT |
+| `edge-client` | ⚠️ Works on laptop; Pi incomplete | Flask + Electron functional; heartbeat.py missing |
 | `web-dashboard` | ⚠️ Partially wired | Real API client exists; some pages still use mock data |
 
 ---
@@ -65,14 +65,12 @@ This document is the single source of truth for the current implementation state
 - FastAPI server on port 3001 with Supabase (PostgreSQL + Storage)
 - `POST /scans` and `POST /scans/batch`: accepts images, uploads to Supabase Storage, inserts result row
 - JWT auth via `get_current_user()`: admin (region-scoped) + superadmin (all regions)
-- All CRUD routers: devices, results, regions, analytics, events, live, suggestions
-- MQTT bridge class exists and is initialized in app lifespan
+- All CRUD routers: devices, results, regions, analytics, events, suggestions
 
-**What's broken (see Bugs 1–4, 6, 8 below):**
+**What's broken (see Bugs 1–3, 6, 8 below):**
 - `metrics` field is always `{}` — inference pipeline never runs after image upload
 - Analytics queries field names that don't exist in the vision model output
 - Grade format mismatch: vision model → `"Premium"`, analytics expects `"A"`
-- `paho-mqtt` missing from environment → server startup crashes
 - `/scans/batch` silently discards all but the last image pair
 - `results.status` column (from migration 001) is never updated past `'pending'`
 
@@ -91,7 +89,6 @@ This document is the single source of truth for the current implementation state
 **What's missing/broken (see Bugs 5, 7 below):**
 - `heartbeat.py` does not exist — `startup.sh` references it but it was never implemented
 - `POST /sessions/{id}/submit` allows double-submit (no status guard)
-- No MQTT listener or sender on the edge — API has MQTT bridge but edge can't receive commands
 - Camera capture (`rpicam-still`) only works on Pi hardware — expected on laptop
 
 ---
@@ -133,13 +130,6 @@ This document is the single source of truth for the current implementation state
 - Completely different field names — analytics returns zeros even if inference ran
 - **Files:** `api-server/app/routers/analytics.py` lines 166–182; `ai-vision-model/inference/report.py`
 - **Fix:** Define and implement the metrics contract — see `api-server/metrics-contract.md`
-
-**BUG 4: `paho-mqtt` not installed → server won't start**
-- `app/services/mqtt_bridge.py` imports `paho.mqtt.client` at module level
-- Package missing from venv → `ModuleNotFoundError: No module named 'paho'` on startup
-- **Fix:** `pip install -e ".[dev]"` (verify `paho-mqtt` is in `pyproject.toml` dependencies)
-
----
 
 ### 🟡 Medium
 
@@ -197,10 +187,9 @@ The root cause of Bugs 1–3 is the absence of a transformation layer between wh
 
 ## Bug Fix Priority Order
 
-1. **BUG 4** — Install `paho-mqtt` (unblocks server startup)
-2. **BUG 1 + 2 + 3** — Wire inference into `POST /scans` + implement metrics contract (unblocks all analytics)
-3. **BUG 7** — Update `results.status` lifecycle in scans router
-4. **BUG 5** — Fix batch endpoint to process all pairs, not just the last
-5. **BUG 6** — Add double-submit guard in edge-client session submit
-6. **BUG 8** — Implement `contrasting_types_pct` (needs variety metadata)
-7. **BUG 9** — Update `edge.client.md` to match actual file structure
+1. **BUG 1 + 2 + 3** — Wire inference into `POST /scans` + implement metrics contract (unblocks all analytics)
+2. **BUG 7** — Update `results.status` lifecycle in scans router
+3. **BUG 5** — Fix batch endpoint to process all pairs, not just the last
+4. **BUG 6** — Add double-submit guard in edge-client session submit
+5. **BUG 8** — Implement `contrasting_types_pct` (needs variety metadata)
+6. **BUG 9** — Update `edge.client.md` to match actual file structure

@@ -36,8 +36,7 @@ Rice Vision API (api-server, FastAPI on port 3001)
   ├── POST /scans → upload images to Supabase Storage → run inference → store metrics
   ├── GET /results, PATCH /results/{id}
   ├── GET /analytics, GET /analytics/trends, GET /analytics/dashboard
-  ├── GET /devices, GET /regions
-  └── MQTT bridge (paho-mqtt) for real-time device commands
+  └── GET /devices, GET /regions
 
            │ Supabase JWT (Bearer token)
            ▼
@@ -176,10 +175,6 @@ Full spec and transformation code: `docs-and-architecture/api-server/metrics-con
 - Fix: the `build_metrics()` transformation function performs this rename
 - Files: `api-server/app/routers/analytics.py` lines 166–182
 
-**BUG 4: `paho-mqtt` missing → server won't start**
-- `ModuleNotFoundError: No module named 'paho'` on startup
-- Fix: `pip install -e ".[dev]"` in the `api-server` directory
-
 ### 🟡 Medium
 
 **BUG 5: `/scans/batch` silently drops all but the last image pair**
@@ -214,7 +209,7 @@ Full spec and transformation code: `docs-and-architecture/api-server/metrics-con
 ## api-server — Key Facts
 
 - Dev server: `uvicorn app.main:app --reload --host 0.0.0.0 --port 3001`
-- Install: `pip install -e ".[dev]"` (includes paho-mqtt)
+- Install: `pip install -e ".[dev]"`
 - Lint: `ruff check app/` and `ruff format app/`
 - Tests: `pytest`
 - Interactive docs: http://localhost:3001/docs
