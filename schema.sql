@@ -89,6 +89,7 @@ CREATE OR REPLACE TRIGGER trg_devices_updated_at
 CREATE TABLE IF NOT EXISTS results (
     id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     device_id     UUID        NOT NULL REFERENCES devices(id) ON DELETE RESTRICT,
+    session_id    TEXT,
     operator_name TEXT,
     rice_variety  TEXT,
     metrics       JSONB       NOT NULL DEFAULT '{}',
@@ -104,6 +105,7 @@ CREATE TABLE IF NOT EXISTS results (
 );
 
 CREATE INDEX IF NOT EXISTS idx_results_device_id ON results(device_id);
+CREATE INDEX IF NOT EXISTS idx_results_session_id ON results(session_id);
 
 CREATE OR REPLACE TRIGGER trg_results_updated_at
     BEFORE UPDATE ON results
@@ -116,7 +118,7 @@ CREATE OR REPLACE TRIGGER trg_results_updated_at
 CREATE TABLE IF NOT EXISTS result_images (
     id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     result_id    UUID        NOT NULL REFERENCES results(id) ON DELETE CASCADE,
-    camera_type  TEXT        NOT NULL CHECK (camera_type IN ('noir', 'led', 'annotated')),
+    camera_type  TEXT        NOT NULL CHECK (camera_type IN ('noir', 'led', 'annotated', 'annotated_ir')),
     storage_url  TEXT        NOT NULL,
     batch_number INTEGER     NOT NULL DEFAULT 1,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()

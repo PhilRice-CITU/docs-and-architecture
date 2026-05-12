@@ -39,6 +39,7 @@ erDiagram
     RESULTS {
         uuid id PK
         uuid device_id FK
+        text session_id "Nullable — links to edge_sessions.id"
         text operator_name "Nullable"
         text rice_variety "Nullable"
         jsonb metrics "AI computations (chalky, broken, etc.)"
@@ -55,7 +56,7 @@ erDiagram
     RESULT_IMAGES {
         uuid id PK
         uuid result_id FK
-        text camera_type "ENUM: noir, led, annotated"
+        text camera_type "ENUM: noir, led, annotated, annotated_ir"
         text storage_url "Supabase Bucket path"
         int batch_number "Default 1"
         timestamp created_at
