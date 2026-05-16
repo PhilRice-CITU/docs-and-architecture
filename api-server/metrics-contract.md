@@ -1,14 +1,14 @@
 # Metrics Contract
 
-**Last updated:** 2026-04-22
+**Last updated:** 2026-05-16
 
-This document defines the canonical shape of the `metrics` JSONB column in the `results` table. This is the contract between the `ai-vision-model` inference pipeline and the `api-server` analytics layer.
+This document defines the canonical shape of the `metrics` JSONB column in the `results` table. This is the contract between the `app/grading/` inference pipeline (`build_payload`) and the `api-server` analytics layer.
 
 ---
 
 ## The Problem
 
-The `ai-vision-model` produces output with field names like `grade`, `total_grains_detected`, and `parameters.broken_kernels_pct`. The `api-server` analytics router reads field names like `qualityGrade`, `totalGrains`, and `chalkinessPercentage`. These two schemas have never been aligned — this document defines the target.
+`app/grading/report.py::build_payload` produces output with field names like `grade`, `total_grains_detected`, and `parameters.broken_kernels_pct`. The dashboard analytics router reads field names like `qualityGrade`, `totalGrains`, and `chalkinessPercentage`. The two schemas are mapped in `app/utils/metrics.py`; this document defines the target shape and the mapping.
 
 ---
 
@@ -113,7 +113,7 @@ GRADE_TO_LETTER = {
 }
 
 def build_metrics(report: dict) -> dict:
-    """Transform ai-vision-model report payload into the canonical metrics JSONB shape."""
+    """Transform app/grading/report.py::build_payload output into the canonical metrics JSONB shape."""
     params = report.get("parameters", {})
     per_grain = report.get("per_grain", [])
 
@@ -149,15 +149,18 @@ def build_metrics(report: dict) -> dict:
 
 ## Where This Is Called
 
-In `api-server/app/routers/scans.py`, after uploading images to Supabase Storage, the flow should be:
+In `api-server/app/services/grading_service.py::grade_result` (background task), after the images are downloaded from Supabase Storage:
 
 ```python
-# 1. Upload images (already implemented)
-# 2. Run inference
+# 1. Run inference + grading in-process
+from ..grading import RiceGrader, build_payload
+from ..grading.grader import grade_from_per_grain
 from ..utils.metrics import build_metrics
-# from ai_vision_model.inference import run_pipeline  (or call as subprocess)
 
-report = run_pipeline(ir_image=ir_bytes, normal_image=raw_bytes)
+grader = RiceGrader()  # or create_default_grader()
+per_grain = grader.grade(raw_bytes, ir_bytes)
+grade_result = grade_from_per_grain(per_grain)
+report = build_payload(grade_result, per_grain)
 metrics = build_metrics(report)
 
 # 3. Insert result with populated metrics and status

@@ -2,8 +2,6 @@
 
 > Day-to-day reference for working in [/api-server](../../api-server). For the *why* behind this layout, see the design spec at [`docs/superpowers/specs/2026-05-09-api-server-architecture-design.md`](../../docs/superpowers/specs/2026-05-09-api-server-architecture-design.md).
 
-> **Note:** MQTT/broker integration (the live SSE bridge, telemetry handler, camera-stream commands, and the device command queue) was removed in 2026-05-10. Sections below that still mention `mqtt_bridge`, `mqtt_message_handler`, `live.py`, or `device_command_service` are stale and pending a rewrite.
-
 ---
 
 ## At a glance
@@ -18,7 +16,8 @@ routers/        — translate HTTP ↔ Python; no DB access, no business rules
      │
      ▼
 services/       — business logic, orchestration, multi-step workflows
-     │           ┌──── adapters/ ──── external systems (vision model, MQTT, Roboflow)
+     │           ┌──── grading/  ───── YOLOv8 ONNX inference + PNS/BAFS 290:2025 grading
+     │           ├──── adapters/ ───── external systems (Roboflow)
      │           │
      ▼           ▼
 repositories/   — only place that touches Supabase (table + storage)
@@ -40,7 +39,7 @@ These never call each other. Both consume the same `services/` and `repositories
 
 ```
 app/
-├── main.py                          — FastAPI factory, CORS, MQTT lifespan, router mounts
+├── main.py                          — FastAPI factory, CORS, lifespan, router mounts
 ├── config.py                        — pydantic-settings; all env vars
 ├── dependencies.py                  — get_supabase, get_current_user, JWT verification
 │
@@ -55,10 +54,9 @@ app/
 │   └── dashboard/                   — Supabase JWT auth
 │       ├── __init__.py              — APIRouter aggregator
 │       ├── results.py               — /results/... (list, get, image variant, grain corrections)
-│       ├── devices.py               — /devices/... (list, create, command queue, camera streams)
+│       ├── devices.py               — /devices/... (list, create, disconnect)
 │       ├── analytics.py             — /analytics + /trends + /dashboard
 │       ├── events.py                — /device-events list + create
-│       ├── live.py                  — /live SSE/WebSocket
 │       ├── regions.py               — /regions list
 │       └── suggestions.py           — /suggestions list + create
 │
@@ -68,22 +66,26 @@ app/
 │   ├── annotation_service.py        — apply_grain_corrections, apply_grade_override + audit
 │   ├── result_service.py            — list/get/patch/image-list/signed-url + visibility checks
 │   ├── device_service.py            — device CRUD + status normalization + heartbeat staleness
-│   ├── device_command_service.py    — queue commands, camera-stream start/stop
 │   ├── device_provisioning_service.py — provision/claim flow used by /edge/v1/devices
 │   ├── device_event_service.py      — emit() audit-event helper (filtered by event_persistence)
 │   ├── device_auth_service.py       — verify_edge_device_secret (uses utils/device_auth crypto)
 │   ├── analytics_service.py         — summary, trends, dashboard aggregation
-│   ├── training_upload_service.py   — Roboflow upload orchestration
-│   └── mqtt_message_handler.py      — dispatch(channel, device_id, payload) → repos
+│   └── training_upload_service.py   — Roboflow upload orchestration
+│
+├── grading/                         — inference + grading (in-process, not an adapter)
+│   ├── inference.py                 — RiceGrader class (model load, detect, merge, post-process)
+│   ├── grader.py                    — grade_from_per_grain, GRADE_THRESHOLDS, PARAMETER_ORDER, CLASS_COLORS
+│   ├── features.py                  — per-grain feature extraction, PX_PER_MM, MM_PER_PX
+│   ├── constants.py                 — MASS_PER_MM2 calibration table
+│   └── report.py                    — build_payload, build_report, save_excel
 │
 ├── repositories/                    — only modules allowed to import supabase
 │   ├── results_repo.py              — results table CRUD + lifecycle (pending/processing/graded/failed/corrected)
 │   ├── result_images_repo.py        — result_images CRUD + replace_annotated
 │   ├── corrections_repo.py          — result_corrections audit log
 │   ├── devices_repo.py              — devices CRUD + region scoping helpers
-│   ├── device_commands_repo.py      — device_commands insert/list/patch_status
 │   ├── device_events_repo.py        — device_events insert + filtered list
-│   ├── device_secrets_repo.py       — read stored device secret hashes
+│   ├── device_secrets_repo.py      — read stored device secret hashes
 │   ├── edge_sessions_repo.py        — edge_sessions get/insert/update
 │   ├── regions_repo.py              — regions list_all/list_minimal/get_by_code
 │   ├── suggestions_repo.py          — suggestions list/insert
@@ -91,9 +93,7 @@ app/
 │   └── storage_repo.py              — Supabase Storage upload/download/signed-url
 │
 ├── adapters/                        — external systems
-│   ├── ai_vision_model.py           — sys.path bootstrap + re-exports (run_inference, grade_batch, …)
-│   ├── roboflow.py                  — upload_image() to Roboflow dataset API
-│   └── mqtt_bridge.py               — paho client lifecycle + SSE subscriber registry
+│   └── roboflow.py                  — upload_image() to Roboflow dataset API
 │
 ├── schemas/                         — Pydantic request/response models, no logic
 │   ├── results.py, scans.py, corrections.py, analytics.py, devices.py,
@@ -164,10 +164,9 @@ Thin HTTP adapters. Each handler validates the path/query/body, calls a service,
 | `routers/edge/devices.py` | `GET /edge/v1/devices/regions`, `POST /provision`, `POST /claim`, `POST /{id}/upload-training`, `GET /{id}/status` |
 | `routers/edge/deps.py` | `require_device()` FastAPI dependency for X-Device-ID auth |
 | `routers/dashboard/results.py` | `GET /results`, `GET /{id}`, `GET /{id}/image`, `GET /{id}/images`, `PATCH /{id}/grains`, `POST /{id}/grade-override`, `GET /{id}/corrections`, `PATCH /{id}` |
-| `routers/dashboard/devices.py` | `GET /devices`, `POST /`, `POST /{id}/disconnect`, `POST /{id}/command`, `POST /{id}/stream/start`, `POST /{id}/stream/stop`, `GET /{id}/commands`, `PATCH /{id}/commands/{command_id}` |
+| `routers/dashboard/devices.py` | `GET /devices`, `POST /`, `POST /{id}/disconnect` |
 | `routers/dashboard/analytics.py` | `GET /analytics`, `GET /trends`, `GET /dashboard` |
 | `routers/dashboard/events.py` | `GET /device-events`, `POST /device-events` |
-| `routers/dashboard/live.py` | SSE/WebSocket streams |
 | `routers/dashboard/regions.py` | `GET /regions` |
 | `routers/dashboard/suggestions.py` | `GET /suggestions`, `POST /suggestions` |
 
@@ -182,13 +181,11 @@ Business logic. Orchestrates repositories + adapters; raises `HTTPException` for
 | `annotation_service.py` | `apply_grain_corrections(...)`, `apply_grade_override(...)` |
 | `result_service.py` | `list_results`, `get_result`, `list_images_for_result`, `list_images_across_results`, `get_signed_url_by_variant`, `get_signed_url_by_image_id`, `list_corrections`, `patch_result_fields`, `ensure_visible` |
 | `device_service.py` | `list_devices`, `create_device`, `disconnect_device`, `to_response` |
-| `device_command_service.py` | `queue_command`, `list_commands`, `update_command_status`, `start_camera_stream`, `stop_camera_stream` |
 | `device_provisioning_service.py` | `provision(...)`, `claim(...)` |
 | `device_event_service.py` | `emit(...)` (filtered by `should_persist_device_event`) |
 | `device_auth_service.py` | `verify_edge_device_secret(...)` |
 | `analytics_service.py` | `get_summary`, `get_trends`, `get_dashboard` |
 | `training_upload_service.py` | `upload_pair(...)` (Roboflow IR + raw) |
-| `mqtt_message_handler.py` | `dispatch(channel, device_id, payload)` + per-channel handlers |
 
 ### repositories/
 
@@ -200,7 +197,6 @@ Single allowed entry point to Supabase. Functions return raw dicts; services map
 | `result_images_repo.py` | `insert_pair`, `replace_annotated`, `list_for_result`, `latest_for_variant`, `get_by_id` |
 | `corrections_repo.py` | `insert`, `list_for_result` |
 | `devices_repo.py` | `get_status`, `get_by_id`, `list_ids_for_region`, `list_display_names`, `get_display_name`, `update`, `list_all_for_user`, `insert`, `get_first_region_id` |
-| `device_commands_repo.py` | `get_status`, `update_status`, `insert`, `list_for_device`, `patch_status` |
 | `device_events_repo.py` | `insert`, `list_filtered` |
 | `device_secrets_repo.py` | `get_secret_hash` |
 | `edge_sessions_repo.py` | `get`, `insert`, `update` |
@@ -209,15 +205,25 @@ Single allowed entry point to Supabase. Functions return raw dicts; services map
 | `analytics_repo.py` | `list_metrics`, `list_results_with_meta`, `list_devices_for_dashboard`, `list_results_in_window` |
 | `storage_repo.py` | `upload_jpeg`, `download`, `signed_url` |
 
+### grading/
+
+In-process inference + grading. Not an adapter — this is a first-party package inside the app. Services import directly.
+
+| File | Public surface |
+|---|---|
+| `inference.py` | `RiceGrader` (load + invoke ONNX models), `create_default_grader()` |
+| `grader.py` | `grade_from_per_grain`, `grade_supported_factors`, `GRADE_THRESHOLDS`, `PARAMETER_ORDER`, `CLASS_COLORS`, `build_report_grader_result` |
+| `features.py` | `PX_PER_MM`, `MM_PER_PX`, per-grain dimensional + IR feature extraction |
+| `constants.py` | `MASS_PER_MM2` per-class calibration table |
+| `report.py` | `build_payload`, `build_report`, `save_excel` |
+
 ### adapters/
 
 External-system wrappers. Each module owns one external dependency.
 
 | File | What it wraps |
 |---|---|
-| `ai_vision_model.py` | The standalone `ai-vision-model` repo. Adds its root to `sys.path` once on import; re-exports `run_inference`, `extract_features`, `grade_batch`, `build_report`, `USE_STUB`. |
 | `roboflow.py` | `upload_image(...)` → Roboflow dataset upload API; tries 3 endpoint shapes for resilience. |
-| `mqtt_bridge.py` | `MQTTBridge` class — paho client lifecycle, topic subscribe, command publish, SSE subscriber registry. Knows nothing about devices/commands; hands parsed payloads to a caller-supplied `dispatch` callback. |
 
 ### utils/
 
@@ -262,7 +268,9 @@ routers/edge/sessions.py::submit_session
            │
            ├─► repositories/results_repo.py::update_status('processing')
            ├─► repositories/storage_repo.py::download × 2
-           ├─► adapters/ai_vision_model.py::run_inference + extract_features + grade_batch + build_report
+           ├─► grading/inference.py::RiceGrader.grade  (YOLOv8 ONNX + post-process per-grain)
+           ├─► grading/grader.py::grade_from_per_grain (aggregate PNS/BAFS 290:2025 grade)
+           ├─► grading/report.py::build_payload        (canonical report dict)
            ├─► utils/metrics.py::build_metrics
            ├─► render_annotated(...)
            ├─► repositories/storage_repo.py::upload_jpeg (annotated.jpg)
@@ -311,7 +319,7 @@ routers/dashboard/results.py::correct_grain_classes
            │
            ├─► repositories/results_repo.py::get_by_id   (snapshot metrics_before)
            ├─► (mutate per-grain class_label in memory)
-           ├─► adapters/ai_vision_model.py::grade_batch  (recompute aggregate grade — NO inference re-run)
+           ├─► grading/grader.py::grade_from_per_grain   (recompute aggregate grade — NO inference re-run)
            ├─► utils/metrics.py::regrade_metrics         (build metrics_after)
            ├─► repositories/results_repo.py::mark_corrected(metrics_after)
            ├─► repositories/corrections_repo.py::insert  (audit row with before+after)
@@ -320,7 +328,7 @@ routers/dashboard/results.py::correct_grain_classes
                   → result_images_repo.replace_annotated
 ```
 
-`apply_grade_override` follows the same shape but skips the `grade_batch` re-run — it just edits `metrics["rawGrade"]` and sets `metrics["gradeOverridden"] = True`.
+`apply_grade_override` follows the same shape but skips the `grade_from_per_grain` re-run — it just edits `metrics["rawGrade"]` and sets `metrics["gradeOverridden"] = True`.
 
 ---
 
@@ -390,7 +398,7 @@ Example: integrating with an SMS provider for alerts.
 
 1. **Adapter** — create `app/adapters/sms.py`. Wrap the provider's SDK or HTTP API behind a small Python interface. The adapter knows nothing about the database.
 2. **Service** — create `app/services/alerting_service.py` that consumes the adapter and any repos it needs.
-3. **Router** — add a router endpoint *only if* the alert is triggered by an HTTP call. If it's triggered by a background event (MQTT, scheduled job), wire it directly in `mqtt_message_handler.py` or wherever the event fires.
+3. **Router** — add a router endpoint *only if* the alert is triggered by an HTTP call. If it's triggered by a scheduled or background job, wire it directly wherever the event fires.
 4. **Config** — add new env vars to `app/config.py` (e.g. `sms_api_key`).
 
 ---
@@ -408,12 +416,13 @@ Quick lookup. "I want to change X → edit Y."
 | Region scoping (admin → region) | `app/utils/scoping.py` |
 | Admin/superadmin role guard | `app/utils/auth_roles.py::require_admin` |
 | Supabase Storage uploads + signed URLs | `app/repositories/storage_repo.py` |
-| ai-vision-model entrypoint | `app/adapters/ai_vision_model.py` (re-exports `run_inference`, `grade_batch`, …) |
+| YOLOv8 ONNX inference | `app/grading/inference.py::RiceGrader` |
+| PNS/BAFS 290:2025 grade thresholds | `app/grading/grader.py::GRADE_THRESHOLDS` |
+| Aggregate grade from per-grain | `app/grading/grader.py::grade_from_per_grain` |
+| Per-grain feature extraction + PX_PER_MM | `app/grading/features.py` |
 | Render annotated bbox overlay | `app/services/grading_service.py::render_annotated` + `CLASS_COLORS` |
 | `results.metrics` JSONB shape | `app/utils/metrics.py` (also see [`metrics-contract.md`](metrics-contract.md)) |
 | Roboflow upload | `app/adapters/roboflow.py` + `app/services/training_upload_service.py` |
-| MQTT broker connection | `app/adapters/mqtt_bridge.py` (lifecycle) |
-| MQTT message → DB | `app/services/mqtt_message_handler.py` |
 | Device event audit emission | `app/services/device_event_service.py::emit` |
 | ISO 8601 datetime parsing | `app/utils/datetime_parsing.py::parse_iso` |
 | FastAPI app factory (mount routers, lifespan) | `app/main.py` |
@@ -424,8 +433,7 @@ Quick lookup. "I want to change X → edit Y."
 
 Things that are intentionally not refactored further, with the reason:
 
-- **`adapters/mqtt_bridge.py` keeps its own subscriber registry in memory.** The SSE fanout queues are ephemeral state, not a database concept. Moving them to a repo would be wrong.
-- **`routers/dashboard/live.py` reads `mqtt_bridge` from `app.state` directly.** Acceptable because the router is the SSE protocol boundary; the bridge is the source. Wrapping it in a "live service" would just add a passthrough.
 - **`routers/edge/sessions.py` is 241 lines.** Just under the 250 target. The `submit_session` handler does a lot because the endpoint *is* the multi-image batch contract. Splitting it further would obscure the flow.
 - **`utils/scoping.py` types `Client` as `Any`.** The supabase client only passes through to `devices_repo`; importing the real type would re-introduce the layering violation. The `Any` alias is a deliberate seam.
-- **`live.py` and `regions.py` aren't deeply abstracted.** They each do one thing (SSE relay, region list). Adding a service layer for endpoints with no business logic is overhead.
+- **`grading/` is inside `app/`, not a sibling package.** Earlier the inference pipeline lived in a separate `ai-vision-model` repo and was imported via a `sys.path` shim. That repo and shim were removed; the grading code is now a first-party in-process package. Services import directly from `app.grading`.
+- **`regions.py` and `suggestions.py` aren't deeply abstracted.** They each do one thing (region list, suggestion list/insert). Adding a service layer for endpoints with no business logic is overhead.
