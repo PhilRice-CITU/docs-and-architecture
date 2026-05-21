@@ -105,6 +105,14 @@ erDiagram
         timestamp created_at
     }
 
+    SUGGESTIONS {
+        uuid id PK
+        text title
+        text body
+        uuid user_id "Nullable — auth.users FK, ON DELETE SET NULL"
+        timestamptz created_at
+    }
+
     REGIONS ||--o{ USERS : "assigned to"
     REGIONS ||--o{ DEVICES : "houses"
     DEVICES ||--o{ RESULTS : "processes"
@@ -123,23 +131,28 @@ The `metrics` column stores the output of the AI inference pipeline after it has
 
 See [metrics-contract.md](./metrics-contract.md) for the full field spec, grade mapping table, and transformation code.
 
-**Quick reference — expected keys:**
+**Quick reference — expected keys** (source: `app/utils/metrics.py::build_metrics()`; see [metrics-contract.md](./metrics-contract.md) for full spec):
 
-| Key | Type | Example |
-|-----|------|---------|
-| `qualityGrade` | `"A"\|"B"\|"C"\|"D"` | `"B"` |
-| `rawGrade` | string | `"Grade No. 2"` |
-| `totalGrains` | int | `112` |
-| `grainSizeClass` | string | `"long"` |
-| `limitingFactor` | string | `"chalky_kernels_pct"` |
-| `brokenGrains` | float | `8.93` |
-| `chalkinessPercentage` | float | `6.25` |
-| `discolorationPercentage` | float | `0.71` |
-| `foreignMatter` | float | `0.0` |
-| `moistureContent` | float\|null | `null` (sensor not yet integrated) |
-| `grainLengthMm` | float\|null | `6.8` |
-| `qualityScore` | float\|null | `null` (not yet implemented) |
-| `parameters` | object | Full PNS/BAFS parameter set |
+| Field | Type | Notes |
+|---|---|---|
+| `qualityGrade` | string | raw PNS grade (e.g. `"Grade no. 2"`) |
+| `totalGrains` | int | |
+| `grainSizeClass` | string | PNS class |
+| `estimatedSizeClass` | string | fallback estimate |
+| `limitingFactor` | string | factor that set the grade |
+| `brokenGrains` | float | % by weight |
+| `brewers` | float | % by weight |
+| `chalkinessPercentage` | float | % by weight |
+| `discolorationPercentage` | float | % by weight |
+| `damagedPercentage` | float | legacy, always `0.0` |
+| `redKernelPercentage` | float | % by weight |
+| `foreignCount` | int | count-only diagnostic |
+| `paddyCount` | int | count-only diagnostic |
+| `grainLengthMm` | float \| null | |
+| `rawGrade` | string | copy of `qualityGrade` |
+| `gradeOverridden` | bool | |
+| `parameters` | object | `{ broken, brewers, discolored, chalky, red }` |
+| `perGrain` | array | per-grain detail objects |
 
 ---
 
