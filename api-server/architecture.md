@@ -160,12 +160,12 @@ Thin HTTP adapters. Each handler validates the path/query/body, calls a service,
 | File | Endpoints |
 |---|---|
 | `routers/edge/scans.py` | `POST /scans`, `POST /scans/batch` (legacy edge upload paths kept for compat) |
-| `routers/edge/sessions.py` | `POST /edge/v1/sessions`, `GET /{id}`, `PATCH /{id}`, `POST /{id}/batches`, `POST /{id}/submit` |
-| `routers/edge/devices.py` | `GET /edge/v1/devices/regions`, `POST /provision`, `POST /claim`, `POST /{id}/upload-training`, `GET /{id}/status` |
+| `routers/edge/sessions.py` | `POST /edge/v1/sessions`, `GET /edge/v1/sessions/{session_id}`, `PATCH /edge/v1/sessions/{session_id}`, `POST /edge/v1/sessions/{session_id}/batches`, `POST /edge/v1/sessions/{session_id}/submit` |
+| `routers/edge/devices.py` | `GET /edge/v1/devices/regions`, `POST /edge/v1/devices/provision`, `POST /edge/v1/devices/claim`, `POST /edge/v1/devices/{device_id}/upload-training`, `GET /edge/v1/devices/{device_id}/status` |
 | `routers/edge/deps.py` | `require_device()` FastAPI dependency for X-Device-ID auth |
-| `routers/dashboard/results.py` | `GET /results`, `GET /{id}`, `GET /{id}/image`, `GET /{id}/images`, `PATCH /{id}/grains`, `POST /{id}/grade-override`, `GET /{id}/corrections`, `PATCH /{id}` |
-| `routers/dashboard/devices.py` | `GET /devices`, `POST /`, `POST /{id}/disconnect` |
-| `routers/dashboard/analytics.py` | `GET /analytics`, `GET /trends`, `GET /dashboard` |
+| `routers/dashboard/results.py` | `GET /results`, `GET /results/images`, `GET /results/images/{image_id}/signed-url`, `GET /results/{result_id}`, `GET /results/{result_id}/image`, `GET /results/{result_id}/images`, `GET /results/{result_id}/batch-images`, `PATCH /results/{result_id}/grains`, `POST /results/{result_id}/grade-override`, `GET /results/{result_id}/corrections`, `PATCH /results/{result_id}` |
+| `routers/dashboard/devices.py` | `GET /devices`, `GET /devices/{device_id}`, `POST /devices`, `POST /devices/{device_id}/disconnect` |
+| `routers/dashboard/analytics.py` | `GET /analytics`, `GET /analytics/trends`, `GET /analytics/dashboard` |
 | `routers/dashboard/events.py` | `GET /device-events`, `POST /device-events` |
 | `routers/dashboard/regions.py` | `GET /regions` |
 | `routers/dashboard/suggestions.py` | `GET /suggestions`, `POST /suggestions` |
@@ -177,10 +177,10 @@ Business logic. Orchestrates repositories + adapters; raises `HTTPException` for
 | File | Public surface |
 |---|---|
 | `scan_service.py` | `ingest_scan(...)` → `IngestedScan` |
-| `grading_service.py` | `grade_result(...)` background task; `render_annotated(...)`, `upload_annotated(...)`, `CLASS_COLORS` |
+| `grading_service.py` | `async grade_result(...)` background task; `render_annotated(...)`, `upload_annotated(...)`, `render_annotated_ir(...)`, `upload_annotated_ir(...)`, `upload_annotated_batch(...)`, `upload_annotated_ir_batch(...)`; `CLASS_COLORS` (also duplicated in `grading_service.py`) |
 | `annotation_service.py` | `apply_grain_corrections(...)`, `apply_grade_override(...)` |
-| `result_service.py` | `list_results`, `get_result`, `list_images_for_result`, `list_images_across_results`, `get_signed_url_by_variant`, `get_signed_url_by_image_id`, `list_corrections`, `patch_result_fields`, `ensure_visible` |
-| `device_service.py` | `list_devices`, `create_device`, `disconnect_device`, `to_response` |
+| `result_service.py` | `list_results`, `get_result`, `list_images_for_result`, `list_images_across_results`, `get_signed_url_by_variant`, `get_signed_url_by_image_id`, `get_images_by_batch`, `list_corrections`, `patch_result_fields`, `ensure_visible` |
+| `device_service.py` | `list_devices`, `get_device`, `create_device`, `disconnect_device`, `to_response` |
 | `device_provisioning_service.py` | `provision(...)`, `claim(...)` |
 | `device_event_service.py` | `emit(...)` (filtered by `should_persist_device_event`) |
 | `device_auth_service.py` | `verify_edge_device_secret(...)` |
@@ -194,7 +194,7 @@ Single allowed entry point to Supabase. Functions return raw dicts; services map
 | File | Public surface |
 |---|---|
 | `results_repo.py` | `get_by_id`, `get_id_device_created`, `insert_pending`, `list_for_devices`, `update_status`, `mark_failed`, `mark_graded`, `mark_corrected`, `patch_fields` |
-| `result_images_repo.py` | `insert_pair`, `replace_annotated`, `list_for_result`, `latest_for_variant`, `get_by_id` |
+| `result_images_repo.py` | `insert_pair`, `insert_batch_images`, `replace_annotated`, `replace_annotated_ir`, `insert_annotated_batch`, `insert_annotated_ir_batch`, `get_all_by_result_id`, `list_for_result`, `latest_for_variant`, `get_by_id` |
 | `corrections_repo.py` | `insert`, `list_for_result` |
 | `devices_repo.py` | `get_status`, `get_by_id`, `list_ids_for_region`, `list_display_names`, `get_display_name`, `update`, `list_all_for_user`, `insert`, `get_first_region_id` |
 | `device_events_repo.py` | `insert`, `list_filtered` |
@@ -212,7 +212,7 @@ In-process inference + grading. Not an adapter — this is a first-party package
 | File | Public surface |
 |---|---|
 | `inference.py` | `RiceGrader` (load + invoke ONNX models), `create_default_grader()` |
-| `grader.py` | `grade_from_per_grain`, `grade_supported_factors`, `GRADE_THRESHOLDS`, `PARAMETER_ORDER`, `CLASS_COLORS`, `build_report_grader_result` |
+| `grader.py` | `grade_from_per_grain`, `grade_supported_factors`, `summarize_counts`, `summarize_area_percentages`, `summarize_weight_percentages`, `summarize_count`, `summarize_paddy_proxy`, `GRADE_THRESHOLDS`, `PARAMETER_ORDER`, `CLASS_COLORS`, `build_report_grader_result` |
 | `features.py` | `PX_PER_MM`, `MM_PER_PX`, per-grain dimensional + IR feature extraction |
 | `constants.py` | `MASS_PER_MM2` per-class calibration table |
 | `report.py` | `build_payload`, `build_report`, `save_excel` |
@@ -235,7 +235,7 @@ Pure functions. Safe to import from anywhere.
 | `datetime_parsing.py` | `parse_iso(value)` — single ISO 8601 parser used everywhere |
 | `device_auth.py` | `hash_device_secret`, `verify_device_secret_hash` (pbkdf2; no I/O) |
 | `event_persistence.py` | `should_persist_device_event(level, message, meta)` filter |
-| `metrics.py` | `build_metrics(report)`, `regrade_metrics(metrics, grade_result)`, `GRADE_TO_LETTER` mapping |
+| `metrics.py` | `build_metrics(report)`, `regrade_metrics(metrics, grade_result)`, `PNS_GRADE_NAMES` tuple (raw PNS grade strings) |
 | `scoping.py` | `resolve_scoped_device_ids`, `resolve_visible_device` (uses `devices_repo` for I/O; supabase typed as `Any` to keep the file pure) |
 
 ---
@@ -420,7 +420,7 @@ Quick lookup. "I want to change X → edit Y."
 | PNS/BAFS 290:2025 grade thresholds | `app/grading/grader.py::GRADE_THRESHOLDS` |
 | Aggregate grade from per-grain | `app/grading/grader.py::grade_from_per_grain` |
 | Per-grain feature extraction + PX_PER_MM | `app/grading/features.py` |
-| Render annotated bbox overlay | `app/services/grading_service.py::render_annotated` + `CLASS_COLORS` |
+| Render annotated bbox overlay | `app/services/grading_service.py::render_annotated` + `CLASS_COLORS` (defined in `grader.py`; duplicated in `grading_service.py`) |
 | `results.metrics` JSONB shape | `app/utils/metrics.py` (also see [`metrics-contract.md`](metrics-contract.md)) |
 | Roboflow upload | `app/adapters/roboflow.py` + `app/services/training_upload_service.py` |
 | Device event audit emission | `app/services/device_event_service.py::emit` |
