@@ -247,3 +247,19 @@ Open a **new query**, paste [`../seed.sql`](../seed.sql), click **Run**. Inserts
 3. Set it to **Private** (FastAPI handles all uploads using the service role key — no public access needed)
 
 The `storage_url` column in `result_images` stores the path within this bucket (e.g., `results/<result_id>/noir.jpg`).
+
+---
+
+## Known Inconsistency — device_events vs. Migrations
+
+**Known inconsistency — device_events vs. migrations.** The migration
+`migrations/2026-05-10_remove_mqtt_tables.sql` drops both `device_commands`
+and `device_events`. However, the current api-server code **requires
+`device_events`** — it is used by `app/routers/dashboard/events.py`,
+`app/repositories/device_events_repo.py`, and
+`app/services/device_event_service.py`. So running the base schema plus all
+migrations diverges from both `schema.sql` (which still defines
+`device_events`) and from the code. A follow-up migration that re-creates
+`device_events` is likely needed. `device_commands` is currently **not
+referenced anywhere** in the api-server code. These are flagged for a team
+decision; this documentation pass does not rewrite migration history.

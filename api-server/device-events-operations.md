@@ -28,10 +28,15 @@ Recommended retention windows:
 
 Current policy is 14 days for INFO and 120 days for WARN/ERROR.
 
-## Optional Scheduling (Supabase pg_cron)
+## Optional Scheduling (Supabase pg_cron) — NOT currently implemented
+
+> **Note:** The `cron.schedule()` job below is a **suggested approach only**.
+> It has **not** been created in the database — there is no pg_cron job in
+> the api-server, migrations, or schema at this time. If you want automated
+> retention, this is the recommended starting point.
 
 ```sql
--- Run daily at 02:10 UTC
+-- Suggested: run daily at 02:10 UTC (not yet implemented)
 select cron.schedule(
   'device_events_retention_daily',
   '10 2 * * *',
