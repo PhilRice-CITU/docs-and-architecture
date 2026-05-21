@@ -129,7 +129,7 @@ erDiagram
 
 The `metrics` column stores the output of the AI inference pipeline after it has been transformed into the canonical analytics schema. Do **not** store the raw `app/grading/report.py::build_payload` output directly — use the transformation function in `app/utils/metrics.py`.
 
-See [metrics-contract.md](./metrics-contract.md) for the full field spec, grade mapping table, and transformation code.
+See [metrics-contract.md](./metrics-contract.md) for the full field spec, grade naming, and transformation code.
 
 **Quick reference — expected keys** (source: `app/utils/metrics.py::build_metrics()`; see [metrics-contract.md](./metrics-contract.md) for full spec):
 
