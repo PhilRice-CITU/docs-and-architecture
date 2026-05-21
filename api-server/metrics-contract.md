@@ -1,6 +1,6 @@
 # Metrics Contract
 
-**Last updated:** 2026-05-16
+**Last updated:** 2026-05-22
 
 This document defines the canonical shape of the `metrics` JSONB column in the `results` table. This is the contract between the `app/grading/` inference pipeline (`build_payload`) and the `api-server` analytics layer.
 
@@ -8,7 +8,7 @@ This document defines the canonical shape of the `metrics` JSONB column in the `
 
 ## The Problem
 
-`app/grading/report.py::build_payload` produces output with field names like `grade`, `total_grains_detected`, and `parameters.broken_kernels_pct`. The dashboard analytics router reads field names like `qualityGrade`, `totalGrains`, and `chalkinessPercentage`. The two schemas are mapped in `app/utils/metrics.py`; this document defines the target shape and the mapping.
+`app/grading/report.py::build_payload` produces output with field names like `grade`, `total_grains_detected`, and `parameters.broken`. The dashboard analytics router reads camelCase field names like `qualityGrade`, `totalGrains`, and `chalkinessPercentage`. The two schemas are mapped in `app/utils/metrics.py`; this document defines the target shape and the mapping.
 
 ---
 
@@ -18,42 +18,24 @@ When `POST /scans` runs inference and stores a result, it must write this shape 
 
 ```json
 {
-  "qualityGrade": "A",
-  "qualityScore": 87.5,
+  "qualityGrade": "Grade no. 2",
   "totalGrains": 112,
   "grainSizeClass": "long",
-  "limitingFactor": "chalky_kernels_pct",
+  "estimatedSizeClass": "long",
+  "limitingFactor": "chalky",
   "brokenGrains": 8.93,
+  "brewers": 0.12,
   "chalkinessPercentage": 6.25,
   "discolorationPercentage": 0.71,
-  "foreignMatter": 0.0,
-  "moistureContent": null,
+  "damagedPercentage": 0.0,
+  "redKernelPercentage": 1.4,
+  "foreignCount": 0,
+  "paddyCount": 1,
   "grainLengthMm": 6.8,
-  "rawGrade": "Grade No. 2",
+  "rawGrade": "Grade no. 2",
   "gradeOverridden": false,
-  "perGrain": [
-    {
-      "grain_id": 0,
-      "class_label": "whole_clear",
-      "bbox": [120, 80, 180, 110],
-      "confidence": 0.92,
-      "length_mm": 6.8,
-      "width_mm": 2.1,
-      "grain_size_class": "long",
-      "ir_mean_intensity": 130.2
-    }
-  ],
-  "parameters": {
-    "broken_kernels_pct": 8.93,
-    "brewers_pct": 0.18,
-    "damaged_kernels_pct": 0.89,
-    "discolored_kernels_pct": 0.71,
-    "chalky_kernels_pct": 6.25,
-    "immature_kernels_pct": 0.45,
-    "contrasting_types_pct": 0.0,
-    "red_kernels_pct": 1.79,
-    "foreign_matter_pct": 0.0
-  }
+  "parameters": { "broken": 8.93, "brewers": 0.12, "discolored": 0.71, "chalky": 6.25, "red": 1.4 },
+  "perGrain": []
 }
 ```
 
@@ -61,87 +43,110 @@ When `POST /scans` runs inference and stores a result, it must write this shape 
 
 | Field | Type | Source | Notes |
 |-------|------|--------|-------|
-| `qualityGrade` | `"A"\|"B"\|"C"\|"D"` | Mapped from vision model `grade` | See grade mapping table below |
-| `qualityScore` | `float\|null` | Computed (100 − weighted defect %) | Not yet implemented in vision model; store `null` for now |
+| `qualityGrade` | `string` | `grade` from report verbatim | Raw PNS grade string; see "Grade naming" below |
 | `totalGrains` | `int` | `total_grains_detected` from report | |
-| `grainSizeClass` | `string` | `grain_size_class` from report | `"short"\|"medium"\|"long"\|"extra_long"\|"mixed"` |
-| `limitingFactor` | `string` | `limiting_factor` from report | Parameter name with tightest passing margin |
-| `brokenGrains` | `float` | `parameters.broken_kernels_pct` | Percentage (0–100) |
-| `chalkinessPercentage` | `float` | `parameters.chalky_kernels_pct` | |
-| `discolorationPercentage` | `float` | `parameters.discolored_kernels_pct` | |
-| `foreignMatter` | `float` | `parameters.foreign_matter_pct` | |
-| `moistureContent` | `float\|null` | Hardware sensor (not yet integrated) | Store `null` until moisture sensor is added |
-| `grainLengthMm` | `float\|null` | Average `length_mm` across `whole_clear` grains in `per_grain` | Compute from per_grain list |
-| `rawGrade` | `string` | `grade` from report verbatim | Preserve for traceability; e.g., `"Grade No. 2"` |
+| `grainSizeClass` | `string` | `grain_size_class` from report | PNS class: `"short"\|"medium"\|"long"\|"extra_long"\|"mixed"` |
+| `estimatedSizeClass` | `string` | `estimated_size_class` from report | Fallback estimate when measurement is unavailable |
+| `limitingFactor` | `string` | `limiting_factor` from report | Parameter key that set the final grade |
+| `brokenGrains` | `float` | `parameters.broken` | % by weight (0–100) |
+| `brewers` | `float` | `parameters.brewers` | % by weight |
+| `chalkinessPercentage` | `float` | `parameters.chalky` | % by weight |
+| `discolorationPercentage` | `float` | `parameters.discolored` | % by weight |
+| `damagedPercentage` | `float` | hardcoded `0.0` | Legacy field; always `0.0` — the `damaged` factor was consolidated into `discolored` |
+| `redKernelPercentage` | `float` | `parameters.red` | % by weight |
+| `foreignCount` | `int` | `foreign_count` from report | Count-only diagnostic; not used in PNS grading |
+| `paddyCount` | `int` | `paddy_count` from report | Count-only diagnostic; not used in PNS grading |
+| `grainLengthMm` | `float\|null` | Average `length_mm` of whole kernels in `perGrain` | Computed by `_avg_whole_kernel_length()`; `null` if no whole kernels measured |
+| `rawGrade` | `string` | `grade` from report verbatim | Copy of `qualityGrade`; preserved for traceability |
 | `gradeOverridden` | `bool` | Set by `POST /results/{id}/grade-override` | `true` when an admin has manually set the final grade |
-| `perGrain` | `array` | `per_grain` from report | Required for dashboard annotation overlay + correction recompute |
-| `parameters` | `object` | `parameters` dict from report | Full parameter set for reference |
+| `parameters` | `object` | `parameters` dict from report | Keys: `broken`, `brewers`, `discolored`, `chalky`, `red` (all floats) |
+| `perGrain` | `array` | `per_grain` from report | Per-grain detail objects; see shape below |
 
 ---
 
-## Grade Mapping
+## Grade Naming
 
-The vision model outputs PNS/BAFS 290:2025 grade labels. Analytics uses A/B/C/D for charting.
+`qualityGrade` and `rawGrade` both carry the raw PNS/BAFS 290:2025 grade string verbatim — exactly one of:
 
-| Vision Model `grade` | `qualityGrade` |
-|----------------------|----------------|
-| `"Premium"` | `"A"` |
-| `"Grade No. 1"` | `"A"` |
-| `"Grade No. 2"` | `"B"` |
-| `"Grade No. 3"` | `"B"` |
-| `"Grade No. 4"` | `"C"` |
-| `"Grade No. 5"` | `"D"` |
-| `"Off-Grade"` | `"D"` |
+- `Premium`
+- `Grade no. 1`
+- `Grade no. 2`
+- `Grade no. 3`
+- `Grade no. 4`
+- `Grade no. 5`
+- `Off-Grade`
+
+There is no A/B/C/D letter-grade collapse anywhere in the pipeline. The dashboard renders these strings directly.
+
+---
+
+## `perGrain` Object Shape
+
+Each element of `perGrain` is a per-grain detail dict as produced by the inference pipeline. The fields used by `_avg_whole_kernel_length()` to compute `grainLengthMm` are:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `visual_class` | `string` | Grain appearance class: `"clear"\|"chalky"\|"discolored"\|"red"` (also falls back to `class_label` if present) |
+| `dimensional_class` | `string` | `"whole"\|"broken"\|"brewers"` — only `"whole"` grains are averaged for `grainLengthMm` |
+| `length_mm` | `float\|null` | Measured length in mm |
+
+Additional per-grain fields (e.g., `bbox`, `confidence`, `width_mm`) are stored verbatim from the inference output for dashboard annotation overlay and correction recompute.
 
 ---
 
 ## Transformation Code (Python)
 
-Add this function to `api-server/app/utils/metrics.py` (create if it doesn't exist):
+The actual implementation lives at `api-server/app/utils/metrics.py`:
 
 ```python
 import statistics
 
-GRADE_TO_LETTER = {
-    "Premium":      "A",
-    "Grade No. 1":  "A",
-    "Grade No. 2":  "B",
-    "Grade No. 3":  "B",
-    "Grade No. 4":  "C",
-    "Grade No. 5":  "D",
-    "Off-Grade":    "D",
-}
+PNS_GRADE_NAMES = (
+    "Premium",
+    "Grade no. 1",
+    "Grade no. 2",
+    "Grade no. 3",
+    "Grade no. 4",
+    "Grade no. 5",
+    "Off-Grade",
+)
 
-def build_metrics(report: dict) -> dict:
-    """Transform app/grading/report.py::build_payload output into the canonical metrics JSONB shape."""
-    params = report.get("parameters", {})
-    per_grain = report.get("per_grain", [])
 
-    whole_clear_lengths = [
+def _avg_whole_kernel_length(per_grain: list[dict]) -> float | None:
+    lengths = [
         g["length_mm"]
         for g in per_grain
-        if g.get("class_label") == "whole_clear" and g.get("length_mm") is not None
+        if g.get("visual_class", g.get("class_label")) in {"clear", "chalky", "discolored", "red"}
+        and g.get("dimensional_class", "whole") == "whole"
+        and g.get("length_mm") is not None
     ]
-    avg_length = round(statistics.mean(whole_clear_lengths), 2) if whole_clear_lengths else None
+    return round(statistics.mean(lengths), 2) if lengths else None
 
+
+def build_metrics(report: dict) -> dict:
+    params = report.get("parameters", {})
+    per_grain = report.get("per_grain", [])
     raw_grade = report.get("grade", "Off-Grade")
 
     return {
-        "qualityGrade":          GRADE_TO_LETTER.get(raw_grade, "D"),
-        "qualityScore":          None,  # not yet implemented
-        "totalGrains":           report.get("total_grains_detected", 0),
-        "grainSizeClass":        report.get("grain_size_class", "mixed"),
-        "limitingFactor":        report.get("limiting_factor", ""),
-        "brokenGrains":          params.get("broken_kernels_pct", 0.0),
-        "chalkinessPercentage":  params.get("chalky_kernels_pct", 0.0),
-        "discolorationPercentage": params.get("discolored_kernels_pct", 0.0),
-        "foreignMatter":         params.get("foreign_matter_pct", 0.0),
-        "moistureContent":       None,  # hardware sensor not yet integrated
-        "grainLengthMm":         avg_length,
-        "rawGrade":              raw_grade,
-        "gradeOverridden":       False,
-        "perGrain":              per_grain,
-        "parameters":            params,
+        "qualityGrade":            raw_grade,
+        "totalGrains":             report.get("total_grains_detected", 0),
+        "grainSizeClass":          report.get("grain_size_class", "mixed"),
+        "estimatedSizeClass":      report.get("estimated_size_class", "unclassified"),
+        "limitingFactor":          report.get("limiting_factor", ""),
+        "brokenGrains":            params.get("broken", 0.0),
+        "brewers":                 params.get("brewers", 0.0),
+        "chalkinessPercentage":    params.get("chalky", 0.0),
+        "discolorationPercentage": params.get("discolored", 0.0),
+        "damagedPercentage":       0.0,
+        "redKernelPercentage":     params.get("red", 0.0),
+        "foreignCount":            int(report.get("foreign_count", 0)),
+        "paddyCount":              int(report.get("paddy_count", 0)),
+        "grainLengthMm":           _avg_whole_kernel_length(per_grain),
+        "rawGrade":                raw_grade,
+        "gradeOverridden":         False,
+        "perGrain":                per_grain,
+        "parameters":              params,
     }
 ```
 
@@ -163,7 +168,7 @@ grade_result = grade_from_per_grain(per_grain)
 report = build_payload(grade_result, per_grain)
 metrics = build_metrics(report)
 
-# 3. Insert result with populated metrics and status
+# 2. Insert result with populated metrics and status
 supabase.table("results").insert({
     "id": result_id,
     "device_id": device_id,
@@ -178,7 +183,8 @@ supabase.table("results").insert({
 
 ## Notes
 
-- `moistureContent` is `null` until a moisture sensor is physically integrated into the rig. The analytics layer handles `null` values correctly (they are excluded from averages).
-- `qualityScore` is reserved for a future weighted composite score. Store `null` until defined.
-- The `parameters` sub-object is stored verbatim for traceability and future re-grading without re-running inference.
-- `rawGrade` preserves the PNS/BAFS label for display in the results table UI.
+- `damagedPercentage` is always `0.0`. The `damaged` defect factor was consolidated into `discolored`; the field is retained for backward compatibility with any existing stored records.
+- `foreignCount` and `paddyCount` are raw counts used for diagnostic display only; they do not feed into PNS grading calculations.
+- The `parameters` sub-object is stored verbatim for traceability and future re-grading without re-running inference. Keys are short names: `broken`, `brewers`, `discolored`, `chalky`, `red`.
+- `rawGrade` preserves the PNS/BAFS label verbatim for display in the results table UI; it is always identical to `qualityGrade`.
+- `grainLengthMm` is `null` when no whole kernels with valid length measurements are present in `perGrain`.
