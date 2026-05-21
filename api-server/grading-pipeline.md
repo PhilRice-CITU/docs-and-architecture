@@ -33,8 +33,8 @@ strings:
 | `chalky`     | IR (authoritative) | PNS chalky kernel                        |
 | `broken`     | white-LED + IR     | Reclassified post-detection by length    |
 | `brewers`    | post-processing    | Reclassified post-detection by min-axis  |
-| `damaged`    | white-LED          | PNS damaged kernel                       |
-| `discolored` | white-LED          | PNS discolored kernel (incl. fermented)  |
+| `damaged`    | white-LED          | Formerly a separate PNS class; consolidated into `discolored` (commit 906ddb7, 2026-05-15) — detections are now counted under `discolored` |
+| `discolored` | white-LED          | PNS discolored kernel (incl. fermented and formerly-damaged kernels) |
 | `red`        | white-LED          | PNS red kernel                           |
 | `foreign`    | white-LED + IR     | Non-rice matter; count-only diagnostic   |
 | `paddy`      | white-LED          | Hulled grains; count-only diagnostic     |
@@ -43,7 +43,7 @@ strings:
 
 Two YOLO segmentation models run on each scan: `normal` (white LED) and `ir`
 (NIR). The IR camera resolves chalky grains better; the white-LED camera
-resolves color-based defects (discolored, red, damaged) better.
+resolves color-based defects (discolored, red) better.
 
 Fusion is implemented in `_merge_detections`
 (`api-server/app/grading/inference.py`):
@@ -58,7 +58,7 @@ Fusion is implemented in `_merge_detections`
    counterpart it is added as a new grain.
 4. **Append remaining normal detections.** All non-chalky white-LED detections
    pass through unchanged (white-LED is authoritative for `discolored`, `red`,
-   `damaged`, `paddy`, `foreign`).
+   `paddy`, `foreign`).
 
 The IR model is trained only on `clear` / `chalky` / `foreign`; non-chalky IR
 detections are not propagated by the fusion logic.
@@ -117,8 +117,8 @@ aggregation entirely.
 |-------------------|------------------|------------------------------------------------------------------------------|
 | broken            | yes (weight-%)   | Length-rule reclassification + weight aggregation                            |
 | brewers           | yes (weight-%)   | Min-axis reclassification + weight aggregation                               |
-| damaged           | yes (weight-%)   | Direct YOLO class                                                            |
-| discolored        | yes (weight-%)   | Direct YOLO class                                                            |
+| damaged           | no (removed)     | Consolidated into `discolored` (commit 906ddb7, 2026-05-15); no longer a separate grading factor |
+| discolored        | yes (weight-%)   | Direct YOLO class (absorbs formerly-damaged kernels)                         |
 | chalky            | yes (weight-%)   | IR-authoritative class                                                       |
 | red               | yes (weight-%)   | Direct YOLO class                                                            |
 | foreign           | no (count)       | PNS unit is % by weight; density of sand/husk wildly varies. `foreignCount`  |
@@ -132,14 +132,14 @@ aggregation entirely.
 `GRADE_THRESHOLDS` in `api-server/app/grading/grader.py` encodes Table 2 (max %
 by weight) for each grade:
 
-| Grade       | broken | brewers | damaged | discolored | chalky | red |
-|-------------|--------|---------|---------|------------|--------|-----|
-| Premium     | 5.0    | 0.10    | 0.5     | 0.5        | 4.0    | 1.0 |
-| Grade no. 1 | 10.0   | 0.20    | 0.7     | 0.7        | 5.0    | 2.0 |
-| Grade no. 2 | 15.0   | 0.40    | 1.0     | 1.0        | 7.0    | 4.0 |
-| Grade no. 3 | 25.0   | 0.60    | 1.5     | 3.0        | 9.0    | 5.0 |
-| Grade no. 4 | 35.0   | 1.00    | 2.0     | 5.0        | 12.0   | 6.0 |
-| Grade no. 5 | 45.0   | 2.00    | 3.0     | 8.0        | 15.0   | 7.0 |
+| Grade       | broken | brewers | discolored | chalky | red |
+|-------------|--------|---------|------------|--------|-----|
+| Premium     | 5.0    | 0.10    | 0.5        | 4.0    | 1.0 |
+| Grade no. 1 | 10.0   | 0.20    | 0.7        | 5.0    | 2.0 |
+| Grade no. 2 | 15.0   | 0.40    | 1.0        | 7.0    | 4.0 |
+| Grade no. 3 | 25.0   | 0.60    | 3.0        | 9.0    | 5.0 |
+| Grade no. 4 | 35.0   | 1.00    | 5.0        | 12.0   | 6.0 |
+| Grade no. 5 | 45.0   | 2.00    | 8.0        | 15.0   | 7.0 |
 
 Grading rule (`grade_supported_factors`): for each factor pick the strictest
 grade whose threshold is not exceeded; the overall grade is the strictest
